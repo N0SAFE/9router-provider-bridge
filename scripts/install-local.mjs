@@ -23,8 +23,45 @@ import { execFileSync } from 'node:child_process';
 import {
   cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+/**
+ * VS Code and the CLI can race on extensions.json; when the file ends up with
+ * trailing garbage every installed extension disappears from the UI. Keep the
+ * longest valid JSON prefix and rewrite the file when that happens.
+ */
+function repairExtensionsCache() {
+  const file = process.env.VSCODE_EXTENSIONS_DIR
+    || path.join(os.homedir(), '.vscode-insiders', 'extensions', 'extensions.json');
+  let raw;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch {
+    return;
+  }
+  try {
+    JSON.parse(raw);
+    return;
+  } catch {
+    for (let end = raw.length; end > 0; end--) {
+      try {
+        const parsed = JSON.parse(raw.slice(0, end));
+        if (!Array.isArray(parsed)) {
+          continue;
+        }
+        writeFileSync(`${file}.corrupt`, raw);
+        writeFileSync(file, JSON.stringify(parsed));
+        console.log(`[local-install] Repaired corrupt extensions.json (${parsed.length} entries kept; backup at ${file}.corrupt)`);
+        return;
+      } catch {
+        continue;
+      }
+    }
+    console.warn(`[local-install] extensions.json is corrupt and could not be repaired automatically: ${file}`);
+  }
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -99,6 +136,7 @@ run(process.execPath, [vsce, 'package', '--out', OUT_VSIX], { cwd: STAGE });
 // ---------------------------------------------------------------------------
 console.log(`[local-install] Installing into ${CLI}…`);
 run(CLI, ['--install-extension', OUT_VSIX, '--force']);
+repairExtensionsCache();
 
 console.log(`\nInstalled local variant — extension id: n0safe.9router-provider-bridge-local`);
 console.log(`    Vendor id for chatLanguageModels.json: 9router-provider-bridge-local\n`);
