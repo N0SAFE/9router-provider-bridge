@@ -108,29 +108,6 @@
                 "Account pool status (display only, not selectable)"
               ],
               "description": "What this group exposes in the model picker. Create several groups (with different names) to get one entry for providers, one for combos and one for pools."
-            },
-            "provider": {
-              "type": "string",
-              "description": "Scope this group to a single provider alias (providers mode), e.g. ocg or ollama. Leave empty for all active providers."
-            },
-            "models": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Opt-in model allowlist for this group. Nothing is added to the picker by default: models are still discovered and listed in the Language Models editor, and only ids in this list (or \"*\" for all) become selectable. Use Add Model on the group, or run \"9Router Bridge: Select Models\".",
-              "defaultSnippets": [
-                {
-                  "body": [
-                    "ocg/kimi-k2.7-code"
-                  ]
-                },
-                {
-                  "body": [
-                    "*"
-                  ]
-                }
-              ]
             }
           }
         }
@@ -148,10 +125,6 @@
       {
         "command": "9router-provider-bridge.showPools",
         "title": "9Router Bridge: Show Pools"
-      },
-      {
-        "command": "9router-provider-bridge.selectModels",
-        "title": "9Router Bridge: Select Models"
       }
     ]
   },

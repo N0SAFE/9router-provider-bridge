@@ -52,21 +52,19 @@ provider.ts  streamBridgeResponse()
 - `provideLanguageModelChatInformation` returns the cached list immediately in
   `silent` mode and triggers a background refresh otherwise.
 
-## Model opt-in
+## No models without a provider group
 
-VS Code adds every model a provider returns to the picker unless
-`LanguageModelChatInformation.isUserSelectable` is `false`, and for
-extension-provided models it only offers opt-out hide toggles. The bridge
-therefore implements opt-in itself, Custom Endpoint style:
+VS Code asks every vendor for models twice: once without a configuration
+(the vendor-wide query) and once per group configured in
+`chatLanguageModels.json`. The bridge answers the vendor-wide query with an
+empty list, so nothing appears and no credential is used until the user adds a
+provider group from *Chat: Manage Language Models*.
 
-- Discovered models are always returned, but with `isUserSelectable: false`
-  when they are not in the group's `models` allowlist. They stay visible under
-  the provider in the Language Models editor without entering the picker.
-- `models` (`["id", ...]` or `["*"]`) is stored in the group entry in
-  `chatLanguageModels.json`; `provider` scopes a group to one provider alias.
-- `applyGroupSelection()` (catalog.ts) applies the allowlist; the
-  `Select Models` command edits the list through `updateGroupModels()`
-  (gateway.ts), then refreshes the catalog and fires a model-change event.
+Every group is an independent instance: its own `baseUrl`, `apiKey` and `mode`.
+VS Code builds model identifiers as `vendor/group/modelId`, so several groups
+can expose the same models with different keys/instances without colliding.
+All models of a group are selectable; there is no allowlist and no global or
+fallback API key.
 
 ## Why one AI SDK client
 

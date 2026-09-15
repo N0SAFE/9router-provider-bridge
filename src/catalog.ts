@@ -128,57 +128,6 @@ export function normalizeMode(value: unknown): CatalogMode {
   return value === "providers" || value === "combos" || value === "pools" ? value : "all";
 }
 
-/**
- * Per-group opt-in selection from chatLanguageModels.json.
- *
- * `models` mirrors the Custom Endpoint vendor: an explicit list of model ids
- * the user enabled. `"*"` enables everything. An absent/empty list enables
- * nothing: models are still discovered and listed under the provider in the
- * Language Models editor, but they are not added to the picker until enabled.
- *
- * `provider` scopes a group to a single provider alias (providers mode only),
- * so users can create one picker entry per provider.
- */
-export interface GroupSelection {
-  models?: unknown;
-  provider?: unknown;
-}
-
-export function modelListFrom(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-    : [];
-}
-
-export function isModelEnabled(selection: GroupSelection, modelId: string): boolean {
-  const list = modelListFrom(selection.models);
-  if (list.length === 0) {
-    return false;
-  }
-  return list.includes("*") || list.includes(modelId);
-}
-
-/**
- * Apply the group's opt-in selection to discovered entries:
- * - pool entries are never selectable (status only),
- * - provider/combo entries become selectable only when listed,
- * - a `provider` filter keeps just that provider's models.
- */
-export function applyGroupSelection(
-  entries: BridgeModelEntry[],
-  selection: GroupSelection = {}
-): BridgeModelEntry[] {
-  const provider = typeof selection.provider === "string" ? selection.provider.trim() : "";
-  const scoped = provider
-    ? entries.filter((entry) => entry.kind === "provider" && entry.alias === provider)
-    : entries;
-
-  return scoped.map((entry) => ({
-    ...entry,
-    isUserSelectable: entry.kind !== "pool" && isModelEnabled(selection, entry.id),
-  }));
-}
-
 function positiveNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 }
