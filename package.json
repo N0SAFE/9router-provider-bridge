@@ -1,0 +1,165 @@
+{
+  "name": "9router-provider-bridge",
+  "displayName": "9Router Provider Bridge",
+  "description": "Brings 9Router providers, combos and account pools into VS Code Copilot's model picker",
+  "version": "0.1.0",
+  "publisher": "n0safe",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/N0SAFE/9router-provider-bridge"
+  },
+  "bugs": {
+    "url": "https://github.com/N0SAFE/9router-provider-bridge/issues"
+  },
+  "type": "module",
+  "engines": {
+    "vscode": "^1.120.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "9router",
+    "router",
+    "copilot",
+    "byok",
+    "llm",
+    "provider",
+    "ai"
+  ],
+  "galleryBanner": {
+    "color": "#0f172a",
+    "theme": "dark"
+  },
+  "pricing": "Free",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.cjs",
+  "contributes": {
+    "configuration": {
+      "title": "9Router Provider Bridge",
+      "properties": {
+        "9router-provider-bridge.logLevel": {
+          "type": "string",
+          "default": "info",
+          "enum": [
+            "error",
+            "warn",
+            "info",
+            "debug"
+          ],
+          "enumDescriptions": [
+            "Only errors",
+            "Errors and warnings",
+            "Errors, warnings, and info messages",
+            "Everything including verbose debug messages"
+          ],
+          "description": "Log verbosity level for the 9Router Bridge output panel."
+        },
+        "9router-provider-bridge.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:20128/v1",
+          "description": "Default 9Router base URL. Used when a chatLanguageModels.json group does not set its own baseUrl."
+        }
+      }
+    },
+    "languageModelChatProviders": [
+      {
+        "vendor": "9router-provider-bridge",
+        "displayName": "9Router",
+        "configuration": {
+          "properties": {
+            "apiKey": {
+              "type": "string",
+              "secret": true,
+              "description": "Optional 9Router API key. Leave empty for a local instance with requireApiKey disabled.",
+              "defaultSnippets": [
+                {
+                  "body": "sk-..."
+                }
+              ]
+            },
+            "baseUrl": {
+              "type": "string",
+              "default": "http://127.0.0.1:20128/v1",
+              "description": "9Router base URL (OpenAI-compatible root, usually ending in /v1).",
+              "defaultSnippets": [
+                {
+                  "body": "http://127.0.0.1:20128/v1"
+                }
+              ]
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "all",
+                "providers",
+                "combos",
+                "pools"
+              ],
+              "default": "all",
+              "enumDescriptions": [
+                "Provider models and combos",
+                "Provider models grouped by active provider only",
+                "Combos only",
+                "Account pool status (display only, not selectable)"
+              ],
+              "description": "What this group exposes in the model picker. Create several groups (with different names) to get one entry for providers, one for combos and one for pools."
+            },
+            "name": {
+              "type": "string",
+              "description": "Group name shown by VS Code; used to recover this group's settings from chatLanguageModels.json."
+            }
+          }
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "9router-provider-bridge.refreshModels",
+        "title": "9Router Bridge: Refresh Models"
+      },
+      {
+        "command": "9router-provider-bridge.showStatus",
+        "title": "9Router Bridge: Show Status"
+      },
+      {
+        "command": "9router-provider-bridge.showPools",
+        "title": "9Router Bridge: Show Pools"
+      }
+    ]
+  },
+  "scripts": {
+    "clean": "rimraf dist",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch": "npm run clean && npm-run-all -p watch:*",
+    "test": "rimraf .test-dist && npx --no-install tsc --outDir .test-dist --rootDir src && node --test .test-dist/*.test.js",
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run clean && npm run check-types && npm run lint && node esbuild.js",
+    "package": "npm run clean && npm run check-types && npm run lint && node esbuild.js --production",
+    "install:local": "node scripts/install-local.mjs",
+    "uninstall": "code-insiders --uninstall-extension n0safe.9router-provider-bridge",
+    "uninstall:local": "code-insiders --uninstall-extension n0safe.9router-provider-bridge-local"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^2.0.47",
+    "ai": "^6.0.180"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "@types/vscode": "^1.120.0",
+    "@vscode/vsce": "^2.10.0",
+    "esbuild": "^0.27.3",
+    "eslint": "^9.39.3",
+    "npm-run-all": "^4.1.5",
+    "rimraf": "^5.0.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
+  }
+}

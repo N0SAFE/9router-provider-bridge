@@ -1,0 +1,116 @@
+// =============================================================================
+// verboseFetch.ts  —  SSE stream logging fetch wrapper
+// =============================================================================
+//
+// Wraps globalThis.fetch to log HTTP request/response details and raw SSE
+// stream data at debug level. Only active when logLevel is set to "debug".
+// The wrapper is transparent — all responses pass through unchanged.
+// =============================================================================
+
+import { log } from './logger.js';
+
+function reasoningLengths(value: unknown): number[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(reasoningLengths);
+  }
+  if (!value || typeof value !== 'object') {return [];}
+
+  return Object.entries(value).flatMap(([key, nested]) => {
+    const ownLength = (key === 'reasoning_content' || key === 'reasoning') && typeof nested === 'string'
+      ? [nested.length]
+      : [];
+    return [...ownLength, ...reasoningLengths(nested)];
+  });
+}
+
+function summarizeJson(value: unknown): string {
+  const reasoning = reasoningLengths(value);
+  const type = value && typeof value === 'object' && 'type' in value
+    ? String((value as { type: unknown }).type)
+    : 'unknown';
+  return `type=${type} reasoning=${reasoning.length > 0} reasoningLengths=[${reasoning.join(',')}]`;
+}
+
+/**
+ * Wraps a fetch function to log HTTP request URLs and raw SSE stream data
+ * at debug log level.
+ */
+export function createVerboseFetch(originalFetch: typeof globalThis.fetch): typeof globalThis.fetch {
+  return async function verboseFetch(
+    input: Parameters<typeof globalThis.fetch>[0],
+    init?: Parameters<typeof globalThis.fetch>[1],
+  ): Promise<Response> {
+    const url = (typeof input === 'string' ? input : input instanceof URL ? input.href : input.url) ?? '';
+    log(`[9router-provider-bridge] FETCH ${init?.method ?? 'GET'} ${url}`, 'debug');
+
+    if (init?.body) {
+      const bodyStr = typeof init.body === 'string'
+        ? init.body
+        : '[non-string body]';
+      try {
+        log(`[9router-provider-bridge] REQUEST BODY bytes=${bodyStr.length} ${summarizeJson(JSON.parse(bodyStr))}`, 'debug');
+      } catch {
+        log(`[9router-provider-bridge] REQUEST BODY bytes=${bodyStr.length} non-json`, 'debug');
+      }
+    }
+
+    const response = await originalFetch(input, init);
+
+    if (!response.ok || !response.body) {return response;}
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('text/event-stream') && !url.includes('/chat/completions')) {return response;}
+
+    log(`[9router-provider-bridge] RESPONSE status=${response.status} ct=${contentType}`, 'debug');
+
+    if (!contentType.includes('text/event-stream')) {return response;}
+
+    // Stream interception for SSE logging
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = writable.getWriter();
+
+    (async () => {
+      let buffer = '';
+      let eventCount = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            await writer.close();
+            log(`[9router-provider-bridge] SSE stream ended (${eventCount} events)`, 'debug');
+            return;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() ?? '';
+          for (const part of parts) {
+            if (!part.trim()) {continue;}
+            eventCount++;
+            const dataLines = part.split('\n')
+              .filter(l => l.startsWith('data: '))
+              .map(l => {
+                const data = l.slice(6);
+                if (data === '[DONE]') {return 'done';}
+                try {return summarizeJson(JSON.parse(data));} catch {return `non-json bytes=${data.length}`;}
+              });
+            for (const data of dataLines) {
+              log(`[9router-provider-bridge] SSE #${eventCount}: ${data}`, 'debug');
+            }
+          }
+          await writer.write(value);
+        }
+      } catch (err) {
+        log(`[9router-provider-bridge] SSE stream error: ${err}`, 'error');
+        try { await writer.abort(err); } catch { /* ignore */ }
+      }
+    })();
+
+    return new Response(readable, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  };
+}
