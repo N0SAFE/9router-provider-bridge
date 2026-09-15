@@ -348,6 +348,8 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
       baseUrl: group.baseUrl,
       apiKey: group.apiKey ? "key" : "",
       mode: group.mode,
+      models: group.models,
+      provider: group.provider ?? null,
     });
   }
 
@@ -478,6 +480,13 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
     _token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelChatInformation[]> {
     const config = options.configuration as Record<string, unknown> | undefined;
+    // No provider group configured (VS Code queries the vendor directly while
+    // building the model management view) -> expose nothing. Otherwise the full
+    // discovered catalogue would appear as a phantom default group before the
+    // user adds a 9Router provider instance themselves.
+    if (!config) {
+      return [];
+    }
     const group = this.resolve(config);
     const key = this.groupKey(group);
 

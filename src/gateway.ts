@@ -162,52 +162,50 @@ export function findGroupMode(
   return "all";
 }
 
-/** Find a group's `models` allowlist by name, then by raw apiKey. */
-export function findGroupModels(
+/** Find a matching group by name, then by raw apiKey, then by baseUrl. */
+function findGroup(
   groups: GroupConfigEntry[],
-  { name, apiKey }: { name?: unknown; apiKey?: unknown } = {}
-): string[] {
+  { name, apiKey, baseUrl }: { name?: unknown; apiKey?: unknown; baseUrl?: unknown } = {}
+): GroupConfigEntry | undefined {
   if (!Array.isArray(groups)) {
-    return [];
+    return undefined;
   }
-  const byName = typeof name === "string" && name
-    ? groups.find((group) => group && group.name === name)
-    : undefined;
-  if (byName) {
-    return modelListFrom(byName.models);
-  }
-  if (typeof apiKey === "string" && apiKey && !apiKey.includes("${input:")) {
-    const byKey = groups.find((group) => group && group.apiKey === apiKey);
-    if (byKey) {
-      return modelListFrom(byKey.models);
-    }
-  }
-  return [];
-}
-
-/** Find a group's `provider` filter by name, then by raw apiKey. */
-export function findGroupProvider(
-  groups: GroupConfigEntry[],
-  { name, apiKey }: { name?: unknown; apiKey?: unknown } = {}
-): string {
-  if (!Array.isArray(groups)) {
-    return "";
-  }
-  const pick = (group: GroupConfigEntry | undefined): string =>
-    group && typeof group.provider === "string" ? group.provider.trim() : "";
   if (typeof name === "string" && name) {
     const byName = groups.find((group) => group && group.name === name);
     if (byName) {
-      return pick(byName);
+      return byName;
     }
   }
   if (typeof apiKey === "string" && apiKey && !apiKey.includes("${input:")) {
     const byKey = groups.find((group) => group && group.apiKey === apiKey);
     if (byKey) {
-      return pick(byKey);
+      return byKey;
     }
   }
-  return "";
+  const wantedBaseUrl = normalizeGatewayUrl(baseUrl);
+  if (wantedBaseUrl) {
+    return groups.find(
+      (group) => group && normalizeGatewayUrl(group.baseUrl) === wantedBaseUrl
+    );
+  }
+  return undefined;
+}
+
+/** Find a group's `models` allowlist by name, raw apiKey or baseUrl. */
+export function findGroupModels(
+  groups: GroupConfigEntry[],
+  match: { name?: unknown; apiKey?: unknown; baseUrl?: unknown } = {}
+): string[] {
+  return modelListFrom(findGroup(groups, match)?.models);
+}
+
+/** Find a group's `provider` filter by name, raw apiKey or baseUrl. */
+export function findGroupProvider(
+  groups: GroupConfigEntry[],
+  match: { name?: unknown; apiKey?: unknown; baseUrl?: unknown } = {}
+): string {
+  const provider = findGroup(groups, match)?.provider;
+  return typeof provider === "string" ? provider.trim() : "";
 }
 
 /** Default chatLanguageModels.json locations across OSes. */
@@ -296,7 +294,7 @@ export function lookupGroupMode(
 
 /** Look the group's `models` allowlist up directly from chatLanguageModels.json. */
 export function lookupGroupModels(
-  match: { name?: unknown; apiKey?: unknown } = {},
+  match: { name?: unknown; apiKey?: unknown; baseUrl?: unknown } = {},
   files: string[] = defaultGroupConfigPaths()
 ): string[] {
   for (const file of files) {
@@ -315,7 +313,7 @@ export function lookupGroupModels(
 
 /** Look the group's `provider` filter up directly from chatLanguageModels.json. */
 export function lookupGroupProvider(
-  match: { name?: unknown; apiKey?: unknown } = {},
+  match: { name?: unknown; apiKey?: unknown; baseUrl?: unknown } = {},
   files: string[] = defaultGroupConfigPaths()
 ): string {
   for (const file of files) {
@@ -408,9 +406,19 @@ export function resolveGroup(
     models:
       forwardedModels.length > 0
         ? forwardedModels
-        : lookupGroupModels({ name: config.groupName, apiKey: forwardedKey }),
+        : lookupGroupModels({
+            name: config.groupName,
+            apiKey: forwardedKey,
+            baseUrl: forwardedBaseUrl,
+          }),
     provider:
-      forwardedProvider || lookupGroupProvider({ name: config.groupName, apiKey: forwardedKey }) || undefined,
+      forwardedProvider ||
+      lookupGroupProvider({
+        name: config.groupName,
+        apiKey: forwardedKey,
+        baseUrl: forwardedBaseUrl,
+      }) ||
+      undefined,
   };
 }
 

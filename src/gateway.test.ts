@@ -190,6 +190,11 @@ test('findGroupModels / findGroupProvider: resolve by name, then raw apiKey', ()
   assert.equal(findGroupProvider(groups, { name: 'providers' }), 'ocg');
   assert.equal(findGroupProvider(groups, { apiKey: 'sk-a' }), 'ocg');
   assert.equal(findGroupProvider(groups, {}), '');
+
+  // VS Code may omit the name and drop secret apiKeys; baseUrl still matches.
+  const byUrl = [{ baseUrl: 'http://127.0.0.1:20128/v1/', models: ['x'], provider: 'ollama' }];
+  assert.deepEqual(findGroupModels(byUrl, { baseUrl: 'http://127.0.0.1:20128/v1' }), ['x']);
+  assert.equal(findGroupProvider(byUrl, { baseUrl: 'http://127.0.0.1:20128/v1' }), 'ollama');
 });
 
 test('lookupGroupModels / lookupGroupProvider: read from chatLanguageModels.json files', () => {

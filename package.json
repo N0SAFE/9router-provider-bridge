@@ -118,19 +118,19 @@
               "items": {
                 "type": "string"
               },
-              "description": "Opt-in model allowlist for this group. Nothing is added to the picker by default: models are still discovered and listed in the Language Models editor, and only ids in this list (or \"*\" for all) become selectable. Run \"9Router Bridge: Select Models\" to edit this list.",
+              "description": "Opt-in model allowlist for this group. Nothing is added to the picker by default: models are still discovered and listed in the Language Models editor, and only ids in this list (or \"*\" for all) become selectable. Use Add Model on the group, or run \"9Router Bridge: Select Models\".",
               "defaultSnippets": [
                 {
-                  "body": "[\n  \"ocg/kimi-k2.7-code\"\n]"
+                  "body": [
+                    "ocg/kimi-k2.7-code"
+                  ]
                 },
                 {
-                  "body": "[\n  \"*\"\n]"
+                  "body": [
+                    "*"
+                  ]
                 }
               ]
-            },
-            "name": {
-              "type": "string",
-              "description": "Group name shown by VS Code; used to recover this group's settings from chatLanguageModels.json."
             }
           }
         }
