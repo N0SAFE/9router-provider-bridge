@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { normalizeMode, type CatalogMode } from "./catalog.js";
+import { modelListFrom, normalizeMode, type CatalogMode } from "./catalog.js";
 
 export interface GroupConfigEntry {
   name?: unknown;
@@ -25,6 +25,8 @@ export interface GroupConfigEntry {
   baseUrl?: unknown;
   apiKey?: unknown;
   mode?: unknown;
+  models?: unknown;
+  provider?: unknown;
 }
 
 export interface ResolvedGroup {
@@ -32,6 +34,10 @@ export interface ResolvedGroup {
   baseUrl: string;
   apiKey: string;
   mode: CatalogMode;
+  /** Enabled model ids (or ["*"]); empty means nothing is added to the picker. */
+  models: string[];
+  /** Optional provider alias/id filter for providers mode. */
+  provider?: string;
 }
 
 /** Trim whitespace and trailing slashes from a configured base URL. */
@@ -156,6 +162,54 @@ export function findGroupMode(
   return "all";
 }
 
+/** Find a group's `models` allowlist by name, then by raw apiKey. */
+export function findGroupModels(
+  groups: GroupConfigEntry[],
+  { name, apiKey }: { name?: unknown; apiKey?: unknown } = {}
+): string[] {
+  if (!Array.isArray(groups)) {
+    return [];
+  }
+  const byName = typeof name === "string" && name
+    ? groups.find((group) => group && group.name === name)
+    : undefined;
+  if (byName) {
+    return modelListFrom(byName.models);
+  }
+  if (typeof apiKey === "string" && apiKey && !apiKey.includes("${input:")) {
+    const byKey = groups.find((group) => group && group.apiKey === apiKey);
+    if (byKey) {
+      return modelListFrom(byKey.models);
+    }
+  }
+  return [];
+}
+
+/** Find a group's `provider` filter by name, then by raw apiKey. */
+export function findGroupProvider(
+  groups: GroupConfigEntry[],
+  { name, apiKey }: { name?: unknown; apiKey?: unknown } = {}
+): string {
+  if (!Array.isArray(groups)) {
+    return "";
+  }
+  const pick = (group: GroupConfigEntry | undefined): string =>
+    group && typeof group.provider === "string" ? group.provider.trim() : "";
+  if (typeof name === "string" && name) {
+    const byName = groups.find((group) => group && group.name === name);
+    if (byName) {
+      return pick(byName);
+    }
+  }
+  if (typeof apiKey === "string" && apiKey && !apiKey.includes("${input:")) {
+    const byKey = groups.find((group) => group && group.apiKey === apiKey);
+    if (byKey) {
+      return pick(byKey);
+    }
+  }
+  return "";
+}
+
 /** Default chatLanguageModels.json locations across OSes. */
 export function defaultGroupConfigPaths(): string[] {
   const home = os.homedir();
@@ -240,6 +294,84 @@ export function lookupGroupMode(
   return "all";
 }
 
+/** Look the group's `models` allowlist up directly from chatLanguageModels.json. */
+export function lookupGroupModels(
+  match: { name?: unknown; apiKey?: unknown } = {},
+  files: string[] = defaultGroupConfigPaths()
+): string[] {
+  for (const file of files) {
+    try {
+      const groups = parseGroupsConfig(fs.readFileSync(file, "utf8"));
+      const models = findGroupModels(groups, match);
+      if (models.length > 0) {
+        return models;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [];
+}
+
+/** Look the group's `provider` filter up directly from chatLanguageModels.json. */
+export function lookupGroupProvider(
+  match: { name?: unknown; apiKey?: unknown } = {},
+  files: string[] = defaultGroupConfigPaths()
+): string {
+  for (const file of files) {
+    try {
+      const groups = parseGroupsConfig(fs.readFileSync(file, "utf8"));
+      const provider = findGroupProvider(groups, match);
+      if (provider) {
+        return provider;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return "";
+}
+
+/**
+ * Persist a group's enabled model list into chatLanguageModels.json so the
+ * selection is visible/editable like any other provider group (Custom Endpoint
+ * style). Matching is by group name first, then by normalized baseUrl.
+ * Returns false when no matching file/entry exists.
+ */
+export function updateGroupModels(
+  match: { vendor: string; name?: string; baseUrl?: string },
+  models: string[],
+  files: string[] = defaultGroupConfigPaths()
+): boolean {
+  if (!match.vendor) {
+    return false;
+  }
+  const wantedBaseUrl = normalizeGatewayUrl(match.baseUrl);
+  for (const file of files) {
+    try {
+      const groups = parseGroupsConfig(fs.readFileSync(file, "utf8"));
+      const index = groups.findIndex((group) => {
+        if (!group || group.vendor !== match.vendor) {
+          return false;
+        }
+        if (match.name) {
+          return group.name === match.name;
+        }
+        return !!wantedBaseUrl && normalizeGatewayUrl(group.baseUrl) === wantedBaseUrl;
+      });
+      if (index === -1) {
+        continue;
+      }
+      groups[index] = { ...groups[index], models };
+      fs.writeFileSync(file, JSON.stringify(groups, null, 2) + "\n");
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
 /**
  * Resolve the effective group settings for a request:
  *   1. values VS Code forwarded (model or model configuration), else
@@ -247,13 +379,23 @@ export function lookupGroupMode(
  *      name or — when VS Code drops the name — by apiKey.
  */
 export function resolveGroup(
-  config: { baseUrl?: unknown; mode?: unknown; groupName?: unknown; apiKey?: unknown } = {},
+  config: {
+    baseUrl?: unknown;
+    mode?: unknown;
+    groupName?: unknown;
+    apiKey?: unknown;
+    models?: unknown;
+    provider?: unknown;
+  } = {},
   defaultBaseUrl = ""
 ): ResolvedGroup {
   const forwardedBaseUrl = normalizeGatewayUrl(config.baseUrl);
   const forwardedKey = typeof config.apiKey === "string" && config.apiKey ? config.apiKey : "";
+  const name = typeof config.groupName === "string" && config.groupName ? config.groupName : undefined;
+  const forwardedModels = modelListFrom(config.models);
+  const forwardedProvider = typeof config.provider === "string" ? config.provider.trim() : "";
   return {
-    name: typeof config.groupName === "string" && config.groupName ? config.groupName : undefined,
+    name,
     baseUrl:
       forwardedBaseUrl ||
       lookupGroupBaseUrl(config.groupName, forwardedKey) ||
@@ -263,6 +405,12 @@ export function resolveGroup(
       config.mode !== undefined
         ? normalizeMode(config.mode)
         : lookupGroupMode({ name: config.groupName, apiKey: forwardedKey }),
+    models:
+      forwardedModels.length > 0
+        ? forwardedModels
+        : lookupGroupModels({ name: config.groupName, apiKey: forwardedKey }),
+    provider:
+      forwardedProvider || lookupGroupProvider({ name: config.groupName, apiKey: forwardedKey }) || undefined,
   };
 }
 
@@ -292,6 +440,11 @@ export function readVendorGroups(
               ? group.apiKey
               : "",
           mode: normalizeMode(group.mode),
+          models: modelListFrom(group.models),
+          provider:
+            typeof group.provider === "string" && group.provider.trim()
+              ? group.provider.trim()
+              : undefined,
         });
       }
     } catch {

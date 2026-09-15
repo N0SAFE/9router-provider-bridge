@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  applyGroupSelection,
   catalogModels,
   describePool,
+  isModelEnabled,
   normalizeMode,
   poolOf,
   summarizeCatalog,
@@ -169,6 +171,51 @@ test('catalogModels(pools): non-selectable status entries', () => {
 
 test('catalogModels: null manifest yields no entries', () => {
   assert.deepEqual(catalogModels(null, 'all'), []);
+});
+
+test('isModelEnabled: nothing enabled without an allowlist, "*" enables all', () => {
+  assert.equal(isModelEnabled({}, 'ocg/kimi-k2.7-code'), false);
+  assert.equal(isModelEnabled({ models: [] }, 'ocg/kimi-k2.7-code'), false);
+  assert.equal(isModelEnabled({ models: ['*'] }, 'anything'), true);
+  assert.equal(isModelEnabled({ models: ['a'] }, 'a'), true);
+  assert.equal(isModelEnabled({ models: ['a'] }, 'b'), false);
+});
+
+test('applyGroupSelection: models are discovered but disabled by default', () => {
+  const entries = applyGroupSelection(catalogModels(manifest, 'all'), {});
+  assert.equal(entries.length, 4);
+  assert.ok(entries.every((entry) => !entry.isUserSelectable));
+});
+
+test('applyGroupSelection: only listed ids become selectable', () => {
+  const entries = applyGroupSelection(catalogModels(manifest, 'all'), {
+    models: ['ocg/kimi-k2.7-code', 'free'],
+  });
+  assert.deepEqual(
+    entries.filter((entry) => entry.isUserSelectable).map((entry) => entry.id),
+    ['ocg/kimi-k2.7-code', 'free'],
+  );
+});
+
+test('applyGroupSelection: "*" enables all provider models and combos, never pools', () => {
+  assert.ok(
+    applyGroupSelection(catalogModels(manifest, 'all'), { models: ['*'] }).every(
+      (entry) => entry.isUserSelectable,
+    ),
+  );
+  assert.ok(
+    applyGroupSelection(catalogModels(manifest, 'pools'), { models: ['*'] }).every(
+      (entry) => !entry.isUserSelectable,
+    ),
+  );
+});
+
+test('applyGroupSelection: provider filter scopes the group to one provider', () => {
+  const entries = applyGroupSelection(catalogModels(manifest, 'all'), {
+    provider: 'ollama',
+    models: ['*'],
+  });
+  assert.deepEqual(entries.map((entry) => entry.id), ['ollama/minimax-m3']);
 });
 
 test('summarizeCatalog: counts models, combos, pools and account readiness', () => {

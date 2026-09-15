@@ -41,35 +41,49 @@ npm run install:local
 
 Add one or more groups to `chatLanguageModels.json` (Command Palette →
 **Chat: Manage Language Models**). Each group is one entry in the model picker;
-use `mode` to choose what it exposes.
+use `mode` to choose what it exposes, `provider` to scope a group to a single
+provider, and `models` to pick which models are added.
+
+Models are **not added to the picker by default**. The bridge discovers
+everything and lists it under the provider in the Language Models editor, but
+only ids in the group's `models` allowlist become selectable. Run
+**9Router Bridge: Select Models** to edit the allowlist with a picker, or write
+it by hand (same style as the Custom Endpoint vendor):
 
 ```jsonc
 [
-  // All provider models + combos (default mode).
+  // Provider models + combos; only the listed models are added to the picker.
   {
     "name": "9Router",
     "vendor": "9router-provider-bridge",
     "baseUrl": "http://127.0.0.1:20128/v1",
-    "apiKey": "sk-..." // optional for local instances
+    "apiKey": "sk-...", // optional for local instances
+    "models": [
+      "ocg/kimi-k2.7-code",
+      "ollama/minimax-m3",
+      "free" // a combo name
+    ]
   },
 
-  // One picker entry that only lists combos.
+  // One entry per provider: scope with `provider`, enable what you want.
+  {
+    "name": "9Router OpenCode Go",
+    "vendor": "9router-provider-bridge",
+    "baseUrl": "http://127.0.0.1:20128/v1",
+    "provider": "ocg",
+    "models": ["ocg/deepseek-v4-flash"]
+  },
+
+  // Combos only.
   {
     "name": "9Router Combos",
     "vendor": "9router-provider-bridge",
     "baseUrl": "http://127.0.0.1:20128/v1",
-    "mode": "combos"
+    "mode": "combos",
+    "models": ["*"] // "*" enables everything this group discovers
   },
 
-  // One picker entry that shows provider models only.
-  {
-    "name": "9Router Providers",
-    "vendor": "9router-provider-bridge",
-    "baseUrl": "http://127.0.0.1:20128/v1",
-    "mode": "providers"
-  },
-
-  // One display-only entry with the account pool health per provider.
+  // Display-only account pool health per provider.
   {
     "name": "9Router Pools",
     "vendor": "9router-provider-bridge",
@@ -78,6 +92,9 @@ use `mode` to choose what it exposes.
   }
 ]
 ```
+
+`models` accepts exact ids (`ocg/kimi-k2.7-code`), combo names, and the `"*"`
+wildcard. An absent or empty list adds nothing to the picker.
 
 ### Modes
 
@@ -94,11 +111,12 @@ health, so you can see cooling accounts before a request fails over.
 
 ## Commands
 
-| Command                              | Description                                    |
-| ------------------------------------ | ---------------------------------------------- |
-| `9Router Bridge: Refresh Models`     | Clears the cache and re-reads 9Router.         |
-| `9Router Bridge: Show Status`        | Catalog counts + per-pool summary.             |
-| `9Router Bridge: Show Pools`         | Quick pick with full pool details.             |
+| Command                              | Description                                                        |
+| ------------------------------------ | ------------------------------------------------------------------ |
+| `9Router Bridge: Select Models`      | Multi-select picker per group; writes the `models` allowlist.      |
+| `9Router Bridge: Refresh Models`     | Clears the cache and re-reads 9Router.                             |
+| `9Router Bridge: Show Status`        | Catalog counts + per-pool summary.                                 |
+| `9Router Bridge: Show Pools`         | Quick pick with full pool details.                                 |
 
 ## Settings
 

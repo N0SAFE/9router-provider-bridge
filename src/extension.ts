@@ -30,6 +30,7 @@
 import * as vscode from "vscode";
 
 import {
+  applyGroupSelection,
   catalogModels,
   describePool,
   normalizeMode,
@@ -44,6 +45,7 @@ import { fetchCatalog, normalizeBaseUrl } from "./client.js";
 import {
   readVendorGroups,
   resolveGroup,
+  updateGroupModels,
   type ResolvedGroup,
 } from "./gateway.js";
 import { initLogger, log } from "./logger.js";
@@ -79,13 +81,18 @@ function toVSCodeModel(
   group: ResolvedGroup,
   forwarded: Record<string, unknown> | undefined
 ): vscode.LanguageModelChatInformation {
+  const disabledHint =
+    entry.kind !== "pool" && !entry.isUserSelectable
+      ? `${entry.tooltip ?? entry.name}\n\nNot enabled — run "9Router Bridge: Select Models" to add it to the picker.`
+      : entry.tooltip;
+
   return {
     id: entry.id,
     name: entry.name,
     family: entry.family,
     version: "1.0.0",
     detail: entry.detail,
-    tooltip: entry.tooltip,
+    tooltip: disabledHint,
     maxInputTokens: entry.contextLength || DEFAULT_CONTEXT_LENGTH,
     maxOutputTokens: entry.maxOutput,
     capabilities: {
@@ -144,6 +151,10 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(`${PKG_NAME}.showPools`, () => showPools(provider))
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(`${PKG_NAME}.selectModels`, () => selectModels(provider))
+  );
 }
 
 export function deactivate(): void {
@@ -193,6 +204,98 @@ async function showPools(provider: BridgeProvider): Promise<void> {
     title: "9Router Account Pools",
     placeHolder: "Account pool health (counts only, no credentials)",
   });
+}
+
+/**
+ * Opt-in model selection: pick models discovered from 9Router and persist the
+ * allowlist into the group's `models` array in chatLanguageModels.json (the
+ * same shape the Custom Endpoint vendor uses), so the model picker only ever
+ * contains what the user enabled.
+ */
+async function selectModels(provider: BridgeProvider): Promise<void> {
+  const vendorGroups = readVendorGroups(VENDOR_ID);
+  if (vendorGroups.length === 0) {
+    vscode.window.showWarningMessage(
+      `9Router Bridge: no "${VENDOR_ID}" group found in chatLanguageModels.json. ` +
+        `Add one from Chat: Manage Language Models.`
+    );
+    return;
+  }
+
+  let target: ResolvedGroup;
+  if (vendorGroups.length === 1) {
+    target = vendorGroups[0];
+  } else {
+    const picked = await vscode.window.showQuickPick(
+      vendorGroups.map((group) => ({
+        label: group.name ?? group.baseUrl ?? "(unnamed)",
+        description: `${group.mode}${group.provider ? ` · ${group.provider}` : ""}${
+          group.models.length > 0 ? ` · ${group.models.length} enabled` : " · none enabled"
+        }`,
+        group,
+      })),
+      { title: "9Router Bridge: select a group" }
+    );
+    if (!picked) {
+      return;
+    }
+    target = picked.group;
+  }
+
+  if (target.mode === "pools") {
+    vscode.window.showInformationMessage(
+      "9Router Bridge: pools mode is display-only (pool health lives in tooltips and Show Pools)."
+    );
+    return;
+  }
+
+  const { entries } = await provider.entriesForGroup({
+    name: target.name,
+    baseUrl: target.baseUrl,
+    mode: target.mode,
+    models: target.models,
+    provider: target.provider,
+  });
+  const selectable = entries.filter((entry) => entry.kind !== "pool");
+  if (selectable.length === 0) {
+    vscode.window.showWarningMessage(
+      `9Router Bridge: no models discovered for ${target.name ?? target.baseUrl}. Is 9Router running?`
+    );
+    return;
+  }
+
+  const enabledAll = target.models.includes("*");
+  const chosen = await vscode.window.showQuickPick(
+    selectable.map((entry) => ({
+      label: entry.name,
+      description: entry.id,
+      picked: enabledAll || target.models.includes(entry.id),
+      entry,
+    })),
+    {
+      canPickMany: true,
+      title: `9Router models · ${target.name ?? target.baseUrl}`,
+      placeHolder: "Checked models are added to the picker; unchecked ones stay listed but unselected",
+    }
+  );
+  if (!chosen) {
+    return;
+  }
+
+  const ids = chosen.map((item) => item.entry.id);
+  const updated = updateGroupModels({ vendor: VENDOR_ID, name: target.name, baseUrl: target.baseUrl }, ids);
+  if (!updated) {
+    vscode.window.showErrorMessage(
+      "9Router Bridge: could not update chatLanguageModels.json (group entry not found)."
+    );
+    return;
+  }
+
+  provider.clearAll();
+  await provider.warmUp();
+  vscode.window.showInformationMessage(
+    `9Router Bridge: ${ids.length} model(s) enabled for ${target.name ?? target.baseUrl}.`
+  );
 }
 
 function setIdleStatus(manifest: BridgeManifest | null): void {
@@ -255,6 +358,8 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
         mode: config?.mode,
         groupName: config?.name,
         apiKey: config?.apiKey,
+        models: config?.models,
+        provider: config?.provider,
       },
       settingBaseUrl()
     );
@@ -285,17 +390,31 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
     return request;
   }
 
-  async listForGroup(config?: Record<string, unknown> | null): Promise<vscode.LanguageModelChatInformation[]> {
+  /**
+   * Discovered entries for a group with the opt-in selection applied. Used both
+   * for the model list and by the Select Models command.
+   */
+  async entriesForGroup(
+    config?: Record<string, unknown> | null
+  ): Promise<{ group: ResolvedGroup; entries: BridgeModelEntry[] }> {
     const group = this.resolve(config);
     const manifest = await this.getCatalog(group);
     if (manifest) {
       this.lastManifest = manifest;
       setIdleStatus(manifest);
     }
-    const entries = catalogModels(manifest, group.mode);
+    const entries = applyGroupSelection(catalogModels(manifest, group.mode), {
+      models: group.models,
+      provider: group.provider,
+    });
+    return { group, entries };
+  }
+
+  async listForGroup(config?: Record<string, unknown> | null): Promise<vscode.LanguageModelChatInformation[]> {
+    const { group, entries } = await this.entriesForGroup(config);
     log(
       `[9router-provider-bridge] group=${group.name ?? "(default)"} mode=${group.mode} ` +
-        `baseUrl=${group.baseUrl} → ${entries.length} entries`,
+        `baseUrl=${group.baseUrl} enabled=${entries.filter((entry) => entry.isUserSelectable).length}/${entries.length}`,
       "info"
     );
     return entries.map((entry) => toVSCodeModel(entry, group, config ?? undefined));
@@ -316,6 +435,8 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
               ...(group.baseUrl ? { baseUrl: group.baseUrl } : {}),
               ...(group.apiKey ? { apiKey: group.apiKey } : {}),
               mode: group.mode,
+              models: group.models,
+              ...(group.provider ? { provider: group.provider } : {}),
             }))
           : [{ baseUrl: settingBaseUrl() }];
 

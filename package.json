@@ -109,6 +109,25 @@
               ],
               "description": "What this group exposes in the model picker. Create several groups (with different names) to get one entry for providers, one for combos and one for pools."
             },
+            "provider": {
+              "type": "string",
+              "description": "Scope this group to a single provider alias (providers mode), e.g. ocg or ollama. Leave empty for all active providers."
+            },
+            "models": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Opt-in model allowlist for this group. Nothing is added to the picker by default: models are still discovered and listed in the Language Models editor, and only ids in this list (or \"*\" for all) become selectable. Run \"9Router Bridge: Select Models\" to edit this list.",
+              "defaultSnippets": [
+                {
+                  "body": "[\n  \"ocg/kimi-k2.7-code\"\n]"
+                },
+                {
+                  "body": "[\n  \"*\"\n]"
+                }
+              ]
+            },
             "name": {
               "type": "string",
               "description": "Group name shown by VS Code; used to recover this group's settings from chatLanguageModels.json."
@@ -129,6 +148,10 @@
       {
         "command": "9router-provider-bridge.showPools",
         "title": "9Router Bridge: Show Pools"
+      },
+      {
+        "command": "9router-provider-bridge.selectModels",
+        "title": "9Router Bridge: Select Models"
       }
     ]
   },

@@ -52,6 +52,22 @@ provider.ts  streamBridgeResponse()
 - `provideLanguageModelChatInformation` returns the cached list immediately in
   `silent` mode and triggers a background refresh otherwise.
 
+## Model opt-in
+
+VS Code adds every model a provider returns to the picker unless
+`LanguageModelChatInformation.isUserSelectable` is `false`, and for
+extension-provided models it only offers opt-out hide toggles. The bridge
+therefore implements opt-in itself, Custom Endpoint style:
+
+- Discovered models are always returned, but with `isUserSelectable: false`
+  when they are not in the group's `models` allowlist. They stay visible under
+  the provider in the Language Models editor without entering the picker.
+- `models` (`["id", ...]` or `["*"]`) is stored in the group entry in
+  `chatLanguageModels.json`; `provider` scopes a group to one provider alias.
+- `applyGroupSelection()` (catalog.ts) applies the allowlist; the
+  `Select Models` command edits the list through `updateGroupModels()`
+  (gateway.ts), then refreshes the catalog and fires a model-change event.
+
 ## Why one AI SDK client
 
 9Router exposes a single OpenAI-compatible endpoint and does its own
