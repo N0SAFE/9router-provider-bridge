@@ -203,6 +203,62 @@ test('applyGroupFilters: providers and models combine', () => {
   assert.deepEqual(entries.map((entry) => entry.id), ['ocg/kimi-k2.7-code']);
 });
 
+test('catalogModels: free and paid models split into two provider groups', () => {
+  const splitManifest: BridgeManifest = {
+    providers: [
+      {
+        object: 'provider',
+        id: 'openrouter',
+        alias: 'openrouter',
+        name: 'OpenRouter',
+        pool: { connections: 1, ready: 1, cooling: 0, unavailable: 0, locks: 0, strategy: 'fill-first' },
+        models: [
+          {
+            id: 'openrouter/openai/gpt-5',
+            name: 'GPT-5',
+            free: false,
+            context_length: 400000,
+            max_completion_tokens: 128000,
+            capabilities: { tools: true },
+          },
+          {
+            id: 'openrouter/meta/llama-free',
+            name: 'Llama Free',
+            free: true,
+            context_length: 131072,
+            max_completion_tokens: 8192,
+            capabilities: { tools: true },
+          },
+        ],
+      },
+    ],
+    pools: [],
+    combos: [],
+  };
+
+  const entries = catalogModels(splitManifest, 'providers');
+  assert.deepEqual(
+    entries.map((entry) => [entry.id, entry.family]),
+    [
+      ['openrouter/openai/gpt-5', 'openrouter'],
+      ['openrouter/meta/llama-free', 'openrouter-free'],
+    ]
+  );
+  assert.equal(entries[1].name, 'OpenRouter Free · Llama Free');
+  assert.equal(entries[1].contextLength, 131072);
+
+  // The provider filter can target just the free group.
+  assert.deepEqual(
+    applyGroupFilters(entries, { providers: ['openrouter-free'] }).map((entry) => entry.id),
+    ['openrouter/meta/llama-free']
+  );
+  // Or just the paid group.
+  assert.deepEqual(
+    applyGroupFilters(entries, { providers: ['openrouter'] }).map((entry) => entry.id),
+    ['openrouter/openai/gpt-5']
+  );
+});
+
 test('summarizeCatalog: counts models, combos, pools and account readiness', () => {
   assert.deepEqual(summarizeCatalog(manifest), {
     providers: 2,

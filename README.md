@@ -105,16 +105,21 @@ health, so you can see cooling accounts before a request fails over.
 `chatLanguageModels.json`:
 
 1. **Content** — providers + combos, providers only, combos only, or pools.
-2. **Provider filter** — optionally expose only some provider aliases
-   (e.g. `oc`, `ocg`); none selected means all active providers.
-3. **Model filter** — all models, or a hand-picked list of model ids/combo
-   names; none selected means all models.
+2. **Providers** — *All providers* or *Choose providers…* (e.g. only
+   `openrouter-free` or only `oc`); selecting every provider stores no filter.
+3. **Models** — *All models* or *Choose models…*; selecting every model stores
+   no filter.
 
 Filters are stored as optional `providers` / `models` arrays on the group.
-Leave them out and everything 9Router exposes is available. Free/public
-providers (e.g. OpenCode Free, alias `oc`) appear without any account and are
-labelled in their tooltip; models retired upstream (HTTP 410) are removed from
-the picker automatically when a request hits them.
+Leave them out and everything 9Router exposes is available. When a new provider
+group is added (for example from *Add Model* in Manage Models), the bridge
+offers to run the same configuration flow for it.
+
+Providers that expose both free and paid models (OpenRouter) appear as two
+picker groups — `OpenRouter` and `OpenRouter Free` — sharing the same routing
+ids. Free/public providers (OpenCode Free, alias `oc`) appear without any
+account and are labelled in their tooltip; models retired upstream (HTTP 410)
+are removed from the picker automatically when a request hits them.
 
 ## Settings
 

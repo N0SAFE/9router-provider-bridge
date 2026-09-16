@@ -71,8 +71,21 @@ fallback API key.
 `9Router Bridge: Configure Provider` writes optional `providers` and `models`
 arrays onto the group entry. Empty/absent lists mean "no filter"; the bridge
 applies them in `applyGroupFilters()` (catalog.ts) before returning the group's
-model list. Free/no-auth providers (e.g. `oc`) appear without an account and
-are labelled `no_auth` in provider metadata and tooltips.
+model list. The command asks explicitly:
+
+- providers: *All providers* / *Choose providers…* (selecting every alias
+  stores an empty list),
+- models: *All models* / *Choose models…* (selecting every entry stores an
+  empty list).
+
+`catalogModels()` splits any provider whose models carry `free: true` (from
+9Router's OpenRouter live feed) into two groups: `<alias>` and
+`<alias>-free` — same model ids, so routing is unchanged. When a new provider
+group appears in `chatLanguageModels.json`, `trackProviderGroups()` offers to
+run the configuration flow for it.
+
+Free/no-auth providers (e.g. `oc`) appear without an account and are labelled
+`no_auth` in provider metadata and tooltips.
 
 When an inference request returns HTTP 410 ("retired"), the extension hides
 that model from every group list for the rest of the session

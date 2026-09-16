@@ -46,6 +46,8 @@ export interface BridgeModelInfo {
   capabilities?: BridgeCapabilities;
   context_length?: number;
   max_completion_tokens?: number;
+  /** Upstream marks the model as free (OpenRouter pricing 0/0). */
+  free?: boolean;
 }
 
 export interface PoolSummary {
@@ -320,31 +322,45 @@ export function catalogModels(
     const pool = poolOf(provider);
     const poolDetail = describePool(pool);
     const poolTip = poolTooltip(provider);
-    for (const model of provider.models ?? []) {
-      const caps = model.capabilities ?? {};
-      const entry: BridgeModelEntry = {
-        id: model.id,
-        name: `${provider.name} · ${model.name || model.id}`,
-        family: provider.alias,
-        detail: poolDetail,
-        tooltip: poolTip,
-        contextLength: positiveNumber(
-          model.context_length,
-          positiveNumber(caps.contextWindow, DEFAULT_CONTEXT_LENGTH)
-        ),
-        maxOutput: positiveNumber(
-          model.max_completion_tokens,
-          positiveNumber(caps.maxOutput, DEFAULT_MAX_OUTPUT)
-        ),
-        imageInput: caps.vision === true,
-        toolCalling: caps.tools === true,
-        isUserSelectable: true,
-        kind: "provider",
-        alias: provider.alias,
-      };
-      modelsById.set(entry.id, entry);
-      if (mode === "all" || mode === "providers") {
-        entries.push(entry);
+    const models = provider.models ?? [];
+    // Some providers expose both free and paid models (OpenRouter). The bridge
+    // shows them as two picker groups — "<Provider>" and "<Provider> Free" —
+    // while the model id stays the same so routing is unchanged.
+    const hasFreeSplit = models.some((model) => model.free === true);
+    const partitions = hasFreeSplit
+      ? [
+          { alias: provider.alias, name: provider.name, models: models.filter((model) => model.free !== true) },
+          { alias: `${provider.alias}-free`, name: `${provider.name} Free`, models: models.filter((model) => model.free === true) },
+        ].filter((partition) => partition.models.length > 0)
+      : [{ alias: provider.alias, name: provider.name, models }];
+
+    for (const partition of partitions) {
+      for (const model of partition.models) {
+        const caps = model.capabilities ?? {};
+        const entry: BridgeModelEntry = {
+          id: model.id,
+          name: `${partition.name} · ${model.name || model.id}`,
+          family: partition.alias,
+          detail: poolDetail,
+          tooltip: poolTip,
+          contextLength: positiveNumber(
+            model.context_length,
+            positiveNumber(caps.contextWindow, DEFAULT_CONTEXT_LENGTH)
+          ),
+          maxOutput: positiveNumber(
+            model.max_completion_tokens,
+            positiveNumber(caps.maxOutput, DEFAULT_MAX_OUTPUT)
+          ),
+          imageInput: caps.vision === true,
+          toolCalling: caps.tools === true,
+          isUserSelectable: true,
+          kind: "provider",
+          alias: partition.alias,
+        };
+        modelsById.set(entry.id, entry);
+        if (mode === "all" || mode === "providers") {
+          entries.push(entry);
+        }
       }
     }
   }

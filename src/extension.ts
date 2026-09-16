@@ -129,7 +129,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const provider = new BridgeProvider();
   context.subscriptions.push(vscode.lm.registerLanguageModelChatProvider(VENDOR_ID, provider));
 
-  void provider.warmUp();
+  void provider.warmUp().then(() => trackProviderGroups(provider));
 
   context.subscriptions.push(
     vscode.commands.registerCommand(`${PKG_NAME}.refreshModels`, async () => {
@@ -137,6 +137,7 @@ export function activate(context: vscode.ExtensionContext): void {
       provider.fireChange();
       vscode.window.showInformationMessage("9Router Bridge: Refreshing…");
       await provider.warmUp();
+      trackProviderGroups(provider);
     })
   );
 
@@ -208,6 +209,10 @@ interface ModeQuickPick extends vscode.QuickPickItem {
   mode: CatalogMode;
 }
 
+interface ScopeQuickPick extends vscode.QuickPickItem {
+  choose: boolean;
+}
+
 interface AliasQuickPick extends vscode.QuickPickItem {
   alias: string;
   picked: boolean;
@@ -218,13 +223,27 @@ interface ModelQuickPick extends vscode.QuickPickItem {
   picked: boolean;
 }
 
+/** Provider aliases with model counts, from unfiltered entries. */
+function aliasOptions(entries: BridgeModelEntry[]): Array<{ alias: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.kind !== "provider") {
+      continue;
+    }
+    counts.set(entry.alias, (counts.get(entry.alias) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([alias, count]) => ({ alias, count }))
+    .sort((a, b) => a.alias.localeCompare(b.alias));
+}
+
 /**
  * "9Router Bridge: Configure Provider" — pick a group and choose what it
  * exposes: content mode (providers/combos/both/pools), an optional provider
  * filter and an optional model filter. Choices are persisted into the group
  * entry in chatLanguageModels.json (empty filters = show everything).
  */
-async function configureProvider(provider: BridgeProvider): Promise<void> {
+async function configureProvider(provider: BridgeProvider, preselectedGroup?: string): Promise<void> {
   const groups = readVendorGroups(VENDOR_ID);
   if (groups.length === 0) {
     vscode.window.showWarningMessage(
@@ -234,8 +253,12 @@ async function configureProvider(provider: BridgeProvider): Promise<void> {
     return;
   }
 
-  let target: ResolvedGroup;
-  if (groups.length === 1) {
+  let target: ResolvedGroup | undefined = preselectedGroup
+    ? groups.find((group) => (group.name ?? group.baseUrl) === preselectedGroup)
+    : undefined;
+  if (target) {
+    // preselected by the new-provider notification
+  } else if (groups.length === 1) {
     target = groups[0];
   } else {
     const picked = await vscode.window.showQuickPick(
@@ -257,6 +280,10 @@ async function configureProvider(provider: BridgeProvider): Promise<void> {
     }
     target = picked.group;
   }
+  if (!target) {
+    return;
+  }
+  const group = target;
 
   const modePick = await vscode.window.showQuickPick<ModeQuickPick>(
     [
@@ -282,8 +309,8 @@ async function configureProvider(provider: BridgeProvider): Promise<void> {
       },
     ],
     {
-      title: `9Router · ${target.name ?? target.baseUrl}: content`,
-      placeHolder: `current: ${target.mode}`,
+      title: `9Router · ${group.name ?? group.baseUrl}: content`,
+      placeHolder: `current: ${group.mode}`,
     }
   );
   if (!modePick) {
@@ -291,95 +318,137 @@ async function configureProvider(provider: BridgeProvider): Promise<void> {
   }
   const mode = modePick.mode;
 
-  let providers = mode === "all" || mode === "providers" ? [...target.providers] : [];
-  if (mode === "all" || mode === "providers") {
-    const { entries } = await provider.entriesForGroup(
-      { name: target.name, baseUrl: target.baseUrl, mode },
-      { ignoreStoredFilters: true }
+  // Discover the full catalog once (ignore stored filters) so both filters can
+  // list everything that actually exists right now.
+  const { entries: allEntries } = await provider.entriesForGroup(
+    { name: group.name, baseUrl: group.baseUrl, mode: "all" },
+    { ignoreStoredFilters: true }
+  );
+
+  // Providers: explicit All / Choose so a group can target exactly the
+  // providers it exposes (e.g. only OpenRouter Free).
+  let providers = mode === "all" || mode === "providers" ? [...group.providers] : [];
+  const aliases = aliasOptions(allEntries);
+  if ((mode === "all" || mode === "providers") && aliases.length > 0) {
+    const scope = await vscode.window.showQuickPick<ScopeQuickPick>(
+      [
+        {
+          label: "$(globe) All providers",
+          description: `${aliases.length} available`,
+          choose: false,
+        },
+        {
+          label: "$(list-selection) Choose providers…",
+          description: "Pick exactly which providers appear",
+          choose: true,
+        },
+      ],
+      {
+        title: `9Router · ${group.name ?? group.baseUrl}: providers`,
+        placeHolder:
+          group.providers.length > 0
+            ? `current: ${group.providers.join(", ")}`
+            : "current: all providers",
+      }
     );
-    const aliases = [
-      ...new Set(
-        entries.filter((entry) => entry.kind === "provider").map((entry) => entry.alias)
-      ),
-    ].sort();
-    if (aliases.length > 0) {
+    if (!scope) {
+      return;
+    }
+    if (scope.choose) {
       const picked = await vscode.window.showQuickPick<AliasQuickPick>(
-        aliases.map((alias) => ({
+        aliases.map(({ alias, count }) => ({
           label: alias,
-          description: `${entries.filter((entry) => entry.alias === alias).length} models`,
-          picked: target.providers.length === 0 || target.providers.includes(alias),
+          description: `${count} models`,
+          picked: group.providers.length === 0 || group.providers.includes(alias),
           alias,
         })),
         {
           canPickMany: true,
-          title: "Provider filter",
-          placeHolder: "Select providers to expose — none selected = all providers",
+          title: "Providers to expose",
+          placeHolder: "Select providers — selecting all sets no filter",
         }
       );
       if (!picked) {
         return;
       }
       providers = picked.map((item) => item.alias);
+      // Everything selected means "all providers": keep the config blank.
+      if (providers.length === aliases.length) {
+        providers = [];
+      }
+    } else {
+      providers = [];
     }
   }
 
-  const scopePick = await vscode.window.showQuickPick(
+  const scopePick = await vscode.window.showQuickPick<ScopeQuickPick>(
     [
       {
         label: "$(list-unordered) All models",
         description: "No model filter",
-        filter: false,
+        choose: false,
       },
       {
         label: "$(checklist) Choose models…",
         description: "Pick exactly which models appear",
-        filter: true,
+        choose: true,
       },
     ],
     {
       title: "Model filter",
       placeHolder:
-        target.models.length > 0 ? `current: ${target.models.length} selected` : "current: all models",
+        group.models.length > 0 ? `current: ${group.models.length} selected` : "current: all models",
     }
   );
   if (!scopePick) {
     return;
   }
 
-  let models = scopePick.filter ? [...target.models] : [];
-  if (scopePick.filter) {
-    const { entries } = await provider.entriesForGroup(
-      { name: target.name, baseUrl: target.baseUrl, mode },
-      { ignoreStoredFilters: true }
-    );
-    const selectable = entries.filter((entry) => entry.kind !== "pool");
-    if (selectable.length === 0) {
+  let models = scopePick.choose ? [...group.models] : [];
+  if (scopePick.choose) {
+    const scopedEntries = allEntries.filter((entry) => {
+      if (entry.kind === "pool") {
+        return false;
+      }
+      if (entry.kind === "combo") {
+        return mode === "all" || mode === "combos";
+      }
+      if (mode !== "all" && mode !== "providers") {
+        return false;
+      }
+      return providers.length === 0 || providers.includes(entry.alias);
+    });
+    if (scopedEntries.length === 0) {
       vscode.window.showWarningMessage(
-        `9Router Bridge: no models discovered for ${target.name ?? target.baseUrl}. Is 9Router running?`
+        `9Router Bridge: no models discovered for ${group.name ?? group.baseUrl}. Is 9Router running?`
       );
       return;
     }
     const chosen = await vscode.window.showQuickPick<ModelQuickPick>(
-      selectable.map((entry) => ({
+      scopedEntries.map((entry) => ({
         label: entry.name,
         description: entry.id,
-        picked: target.models.length === 0 || target.models.includes(entry.id),
+        picked: group.models.length === 0 || group.models.includes(entry.id),
         modelId: entry.id,
       })),
       {
         canPickMany: true,
-        title: `Models to expose · ${target.name ?? target.baseUrl}`,
-        placeHolder: "Select models to expose — none selected = all models",
+        title: `Models to expose · ${group.name ?? group.baseUrl}`,
+        placeHolder: "Select models — selecting all sets no filter",
       }
     );
     if (!chosen) {
       return;
     }
     models = chosen.map((item) => item.modelId);
+    // Everything selected means "all models": keep the config blank.
+    if (models.length === scopedEntries.length) {
+      models = [];
+    }
   }
 
   const updated = updateGroupConfig(
-    { vendor: VENDOR_ID, name: target.name, baseUrl: target.baseUrl },
+    { vendor: VENDOR_ID, name: group.name, baseUrl: group.baseUrl },
     { mode, providers, models }
   );
   if (!updated) {
@@ -391,6 +460,7 @@ async function configureProvider(provider: BridgeProvider): Promise<void> {
 
   provider.clearAll();
   await provider.warmUp();
+  trackProviderGroups(provider);
 
   const summary = [`mode: ${mode}`];
   if (providers.length > 0) {
@@ -400,8 +470,43 @@ async function configureProvider(provider: BridgeProvider): Promise<void> {
     summary.push(`${models.length} models`);
   }
   vscode.window.showInformationMessage(
-    `9Router Bridge: ${target.name ?? target.baseUrl} configured (${summary.join(" · ")}).`
+    `9Router Bridge: ${group.name ?? group.baseUrl} configured (${summary.join(" · ")}).`
   );
+}
+
+let knownProviderGroups: Set<string> | null = null;
+
+/**
+ * Notify when a new provider group appears in chatLanguageModels.json — e.g.
+ * right after VS Code's Add Model flow — and offer to configure what it
+ * exposes. The first observation only records the baseline.
+ */
+function trackProviderGroups(provider: BridgeProvider): void {
+  const names = readVendorGroups(VENDOR_ID).map(
+    (group) => group.name ?? group.baseUrl ?? "(unnamed)"
+  );
+  if (knownProviderGroups === null) {
+    knownProviderGroups = new Set(names);
+    return;
+  }
+  const known = knownProviderGroups;
+  const added = names.filter((name) => !known.has(name));
+  for (const name of names) {
+    known.add(name);
+  }
+  for (const name of added) {
+    void vscode.window
+      .showInformationMessage(
+        `9Router Bridge: provider "${name}" was added. Configure what it exposes?`,
+        "Configure",
+        "Use defaults"
+      )
+      .then((selection) => {
+        if (selection === "Configure") {
+          void configureProvider(provider, name);
+        }
+      });
+  }
 }
 
 function setIdleStatus(manifest: BridgeManifest | null): void {
@@ -611,6 +716,7 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
         log(`[9router-provider-bridge] group ${key} changed — firing model change`, "info");
         this.fireChange();
       }
+      trackProviderGroups(this);
     } catch (err) {
       log(`[9router-provider-bridge] refresh failed: ${(err as Error).message}`, "error");
     }
