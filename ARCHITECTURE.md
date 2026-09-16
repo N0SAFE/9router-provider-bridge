@@ -66,6 +66,22 @@ can expose the same models with different keys/instances without colliding.
 All models of a group are selectable; there is no allowlist and no global or
 fallback API key.
 
+## Group filters and retired models
+
+`9Router Bridge: Configure Provider` writes optional `providers` and `models`
+arrays onto the group entry. Empty/absent lists mean "no filter"; the bridge
+applies them in `applyGroupFilters()` (catalog.ts) before returning the group's
+model list. Free/no-auth providers (e.g. `oc`) appear without an account and
+are labelled `no_auth` in provider metadata and tooltips.
+
+When an inference request returns HTTP 410 ("retired"), the extension hides
+that model from every group list for the rest of the session
+(`BridgeProvider.retireModel`) and reports a clear error, so a retired upstream
+model cannot be selected again even though 9Router's catalog still lists it.
+9Router also drops known-retired registry entries (e.g. Ollama's
+`minimax-m2.5`) and includes no-auth providers in `/v1/models`,
+`/v1/providers`, `/v1/combos` and `/v1/bridge`.
+
 ## Why one AI SDK client
 
 9Router exposes a single OpenAI-compatible endpoint and does its own

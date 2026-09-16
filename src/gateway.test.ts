@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -16,6 +16,7 @@ import {
   parseGroupsConfig,
   readVendorGroups,
   resolveGroup,
+  updateGroupConfig,
 } from './gateway.js';
 
 test('hasGroupConfiguration: only non-empty group objects pass the gate', () => {
@@ -130,6 +131,8 @@ test('resolveGroup: forwarded values win over the file lookup', () => {
     baseUrl: 'http://forwarded/v1',
     apiKey: 'sk-x',
     mode: 'pools',
+    providers: [],
+    models: [],
   });
 });
 
@@ -138,6 +141,82 @@ test('resolveGroup: falls back to the provided default base URL', () => {
   assert.equal(group.baseUrl, 'http://127.0.0.1:20128/v1');
   assert.equal(group.mode, 'all');
   assert.equal(group.apiKey, '');
+  assert.deepEqual(group.providers, []);
+  assert.deepEqual(group.models, []);
+});
+
+test('resolveGroup: forwarded filters win, stored filters are recovered otherwise', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bridge-gateway-'));
+  const file = join(dir, 'chatLanguageModels.json');
+  try {
+    writeFileSync(file, JSON.stringify([
+      {
+        name: '9Router',
+        vendor: '9router-provider-bridge',
+        providers: ['ocg', 'oc'],
+        models: ['ocg/kimi-k2.7-code'],
+      },
+    ]));
+
+    const forwarded = resolveGroup(
+      { groupName: '9Router', providers: ['ollama'], models: [] },
+      '',
+      [file]
+    );
+    assert.deepEqual(forwarded.providers, ['ollama']);
+    assert.deepEqual(forwarded.models, []);
+
+    const stored = resolveGroup({ groupName: '9Router' }, '', [file]);
+    assert.deepEqual(stored.providers, ['ocg', 'oc']);
+    assert.deepEqual(stored.models, ['ocg/kimi-k2.7-code']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('updateGroupConfig: persists mode and filters, clears empty filters', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bridge-gateway-'));
+  const file = join(dir, 'chatLanguageModels.json');
+  try {
+    writeFileSync(file, JSON.stringify([
+      { name: '9Router', vendor: '9router-provider-bridge', baseUrl: 'http://127.0.0.1:20128/v1' },
+      { name: 'other', vendor: 'other-vendor' },
+    ]));
+
+    assert.equal(
+      updateGroupConfig(
+        { vendor: '9router-provider-bridge', name: '9Router' },
+        { mode: 'combos', providers: ['oc', 'ocg'], models: ['free', 'ocg/kimi-k2.7-code'] },
+        [file]
+      ),
+      true
+    );
+    let groups = JSON.parse(readFileSync(file, 'utf8'));
+    assert.equal(groups[0].mode, 'combos');
+    assert.deepEqual(groups[0].providers, ['oc', 'ocg']);
+    assert.deepEqual(groups[0].models, ['free', 'ocg/kimi-k2.7-code']);
+
+    // Empty filters and mode "all" remove the properties again.
+    assert.equal(
+      updateGroupConfig(
+        { vendor: '9router-provider-bridge', name: '9Router' },
+        { mode: 'all', providers: [], models: [] },
+        [file]
+      ),
+      true
+    );
+    groups = JSON.parse(readFileSync(file, 'utf8'));
+    assert.equal(groups[0].mode, undefined);
+    assert.equal(groups[0].providers, undefined);
+    assert.equal(groups[0].models, undefined);
+
+    assert.equal(
+      updateGroupConfig({ vendor: '9router-provider-bridge', name: 'missing' }, { mode: 'providers' }, [file]),
+      false
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('readVendorGroups: filters by vendor and normalizes fields', () => {
@@ -150,6 +229,8 @@ test('readVendorGroups: filters by vendor and normalizes fields', () => {
         vendor: '9router-provider-bridge',
         baseUrl: 'http://127.0.0.1:20128/v1/',
         mode: 'providers',
+        providers: ['ocg'],
+        models: ['ocg/kimi-k2.7-code', 42],
       },
       { name: 'combos', vendor: '9router-provider-bridge', apiKey: 'sk-raw', mode: 'combos' },
       { name: 'other', vendor: 'opencode-provider-bridge', baseUrl: 'http://other/v1' },
@@ -162,12 +243,16 @@ test('readVendorGroups: filters by vendor and normalizes fields', () => {
       baseUrl: 'http://127.0.0.1:20128/v1',
       apiKey: '',
       mode: 'providers',
+      providers: ['ocg'],
+      models: ['ocg/kimi-k2.7-code'],
     });
     assert.deepEqual(groups[1], {
       name: 'combos',
       baseUrl: '',
       apiKey: 'sk-raw',
       mode: 'combos',
+      providers: [],
+      models: [],
     });
     // ${input:...} placeholders are never treated as concrete keys.
     assert.equal(groups[2].apiKey, '');

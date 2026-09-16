@@ -279,6 +279,9 @@ function classifyError(err: unknown): Error {
   if (statusCode === 404) {
     return vscode.LanguageModelError.NotFound(`9Router: model not found. ${detail}`);
   }
+  if (statusCode === 410) {
+    return vscode.LanguageModelError.NotFound(`9Router: model retired upstream. ${detail}`);
+  }
   return new vscode.LanguageModelError(`9Router request failed: ${detail}`);
 }
 

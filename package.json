@@ -108,6 +108,20 @@
                 "Account pool status (display only, not selectable)"
               ],
               "description": "What this group exposes in the model picker. Create several groups (with different names) to get one entry for providers, one for combos and one for pools."
+            },
+            "providers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Optional provider filter: expose only models from these provider aliases (e.g. oc, ocg, ollama). Leave empty for all active providers. Configure with \"9Router Bridge: Configure Provider\"."
+            },
+            "models": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Optional model filter: expose only these model ids (e.g. ocg/kimi-k2.7-code or a combo name). Leave empty for every discovered model. Configure with \"9Router Bridge: Configure Provider\"."
             }
           }
         }
@@ -125,6 +139,10 @@
       {
         "command": "9router-provider-bridge.showPools",
         "title": "9Router Bridge: Show Pools"
+      },
+      {
+        "command": "9router-provider-bridge.configureProvider",
+        "title": "9Router Bridge: Configure Provider"
       }
     ]
   },

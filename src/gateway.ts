@@ -19,12 +19,22 @@ import * as path from "node:path";
 
 import { normalizeMode, type CatalogMode } from "./catalog.js";
 
+export function filterListFrom(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+        .map((entry) => entry.trim())
+    : [];
+}
+
 export interface GroupConfigEntry {
   name?: unknown;
   vendor?: unknown;
   baseUrl?: unknown;
   apiKey?: unknown;
   mode?: unknown;
+  providers?: unknown;
+  models?: unknown;
 }
 
 export interface ResolvedGroup {
@@ -32,6 +42,10 @@ export interface ResolvedGroup {
   baseUrl: string;
   apiKey: string;
   mode: CatalogMode;
+  /** Provider aliases to expose (empty = all). Set from Configure Provider. */
+  providers: string[];
+  /** Model ids to expose (empty = all). Set from Configure Provider. */
+  models: string[];
 }
 
 /**
@@ -174,6 +188,57 @@ export function findGroupMode(
   return "all";
 }
 
+/** Find a matching group by name, then by raw apiKey, then by baseUrl. */
+function findGroup(
+  groups: GroupConfigEntry[],
+  { name, apiKey, baseUrl }: { name?: unknown; apiKey?: unknown; baseUrl?: unknown } = {}
+): GroupConfigEntry | undefined {
+  if (!Array.isArray(groups)) {
+    return undefined;
+  }
+  if (typeof name === "string" && name) {
+    const byName = groups.find((group) => group && group.name === name);
+    if (byName) {
+      return byName;
+    }
+  }
+  if (typeof apiKey === "string" && apiKey && !apiKey.includes("${input:")) {
+    const byKey = groups.find((group) => group && group.apiKey === apiKey);
+    if (byKey) {
+      return byKey;
+    }
+  }
+  const wantedBaseUrl = normalizeGatewayUrl(baseUrl);
+  if (wantedBaseUrl) {
+    return groups.find(
+      (group) => group && normalizeGatewayUrl(group.baseUrl) === wantedBaseUrl
+    );
+  }
+  return undefined;
+}
+
+/** Look a group's optional filters up directly from chatLanguageModels.json. */
+export function lookupGroupFilters(
+  match: { name?: unknown; apiKey?: unknown; baseUrl?: unknown } = {},
+  files: string[] = defaultGroupConfigPaths()
+): { providers: string[]; models: string[] } {
+  for (const file of files) {
+    try {
+      const groups = parseGroupsConfig(fs.readFileSync(file, "utf8"));
+      const group = findGroup(groups, match);
+      if (group) {
+        return {
+          providers: filterListFrom(group.providers),
+          models: filterListFrom(group.models),
+        };
+      }
+    } catch {
+      continue;
+    }
+  }
+  return { providers: [], models: [] };
+}
+
 /** Default chatLanguageModels.json locations across OSes. */
 export function defaultGroupConfigPaths(): string[] {
   const home = os.homedir();
@@ -270,23 +335,39 @@ export function resolveGroup(
     mode?: unknown;
     groupName?: unknown;
     apiKey?: unknown;
+    providers?: unknown;
+    models?: unknown;
   } = {},
-  defaultBaseUrl = ""
+  defaultBaseUrl = "",
+  files?: string[]
 ): ResolvedGroup {
   const forwardedBaseUrl = normalizeGatewayUrl(config.baseUrl);
   const forwardedKey = typeof config.apiKey === "string" && config.apiKey ? config.apiKey : "";
   const name = typeof config.groupName === "string" && config.groupName ? config.groupName : undefined;
+  const forwardedProviders = filterListFrom(config.providers);
+  const forwardedModels = filterListFrom(config.models);
+  const storedFilters =
+    forwardedProviders.length === 0 && forwardedModels.length === 0
+      ? lookupGroupFilters(
+          { name: config.groupName, apiKey: forwardedKey, baseUrl: forwardedBaseUrl },
+          files
+        )
+      : { providers: [], models: [] };
   return {
     name,
     baseUrl:
       forwardedBaseUrl ||
-      lookupGroupBaseUrl(config.groupName, forwardedKey) ||
+      lookupGroupBaseUrl(config.groupName, forwardedKey, files) ||
       normalizeGatewayUrl(defaultBaseUrl),
-    apiKey: forwardedKey || lookupGroupApiKey({ name: config.groupName, baseUrl: forwardedBaseUrl }),
+    apiKey:
+      forwardedKey ||
+      lookupGroupApiKey({ name: config.groupName, baseUrl: forwardedBaseUrl }, files),
     mode:
       config.mode !== undefined
         ? normalizeMode(config.mode)
-        : lookupGroupMode({ name: config.groupName, apiKey: forwardedKey }),
+        : lookupGroupMode({ name: config.groupName, apiKey: forwardedKey }, files),
+    providers: forwardedProviders.length > 0 ? forwardedProviders : storedFilters.providers,
+    models: forwardedModels.length > 0 ? forwardedModels : storedFilters.models,
   };
 }
 
@@ -316,6 +397,8 @@ export function readVendorGroups(
               ? group.apiKey
               : "",
           mode: normalizeMode(group.mode),
+          providers: filterListFrom(group.providers),
+          models: filterListFrom(group.models),
         });
       }
     } catch {
@@ -323,4 +406,77 @@ export function readVendorGroups(
     }
   }
   return groups;
+}
+
+export interface GroupConfigPatch {
+  mode?: CatalogMode;
+  providers?: string[];
+  models?: string[];
+}
+
+/**
+ * Persist the Configure Provider choices into the matching group entry in
+ * chatLanguageModels.json: `mode` plus optional `providers`/`models` filters.
+ * Empty filters and mode "all" remove the property so files stay clean.
+ * Matching is by group name first, then by normalized baseUrl.
+ * Returns false when no matching file/entry exists.
+ */
+export function updateGroupConfig(
+  match: { vendor: string; name?: string; baseUrl?: string },
+  patch: GroupConfigPatch,
+  files: string[] = defaultGroupConfigPaths()
+): boolean {
+  if (!match.vendor) {
+    return false;
+  }
+  const wantedBaseUrl = normalizeGatewayUrl(match.baseUrl);
+  for (const file of files) {
+    try {
+      const groups = parseGroupsConfig(fs.readFileSync(file, "utf8"));
+      const index = groups.findIndex((group) => {
+        if (!group || group.vendor !== match.vendor) {
+          return false;
+        }
+        if (match.name) {
+          return group.name === match.name;
+        }
+        return !!wantedBaseUrl && normalizeGatewayUrl(group.baseUrl) === wantedBaseUrl;
+      });
+      if (index === -1) {
+        continue;
+      }
+
+      const next: GroupConfigEntry = { ...groups[index] };
+      if (patch.mode !== undefined) {
+        if (patch.mode === "all") {
+          delete next.mode;
+        } else {
+          next.mode = patch.mode;
+        }
+      }
+      if (patch.providers !== undefined) {
+        const providers = filterListFrom(patch.providers);
+        if (providers.length === 0) {
+          delete next.providers;
+        } else {
+          next.providers = providers;
+        }
+      }
+      if (patch.models !== undefined) {
+        const models = filterListFrom(patch.models);
+        if (models.length === 0) {
+          delete next.models;
+        } else {
+          next.models = models;
+        }
+      }
+
+      groups[index] = next;
+      fs.writeFileSync(file, JSON.stringify(groups, null, 2) + "\n");
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
 }

@@ -30,6 +30,7 @@
 import * as vscode from "vscode";
 
 import {
+  applyGroupFilters,
   catalogModels,
   describePool,
   normalizeMode,
@@ -45,6 +46,7 @@ import {
   hasGroupConfiguration,
   readVendorGroups,
   resolveGroup,
+  updateGroupConfig,
   type ResolvedGroup,
 } from "./gateway.js";
 import { initLogger, log } from "./logger.js";
@@ -145,6 +147,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(`${PKG_NAME}.showPools`, () => showPools(provider))
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(`${PKG_NAME}.configureProvider`, () =>
+      configureProvider(provider)
+    )
+  );
 }
 
 export function deactivate(): void {
@@ -196,6 +204,206 @@ async function showPools(provider: BridgeProvider): Promise<void> {
   });
 }
 
+interface ModeQuickPick extends vscode.QuickPickItem {
+  mode: CatalogMode;
+}
+
+interface AliasQuickPick extends vscode.QuickPickItem {
+  alias: string;
+  picked: boolean;
+}
+
+interface ModelQuickPick extends vscode.QuickPickItem {
+  modelId: string;
+  picked: boolean;
+}
+
+/**
+ * "9Router Bridge: Configure Provider" — pick a group and choose what it
+ * exposes: content mode (providers/combos/both/pools), an optional provider
+ * filter and an optional model filter. Choices are persisted into the group
+ * entry in chatLanguageModels.json (empty filters = show everything).
+ */
+async function configureProvider(provider: BridgeProvider): Promise<void> {
+  const groups = readVendorGroups(VENDOR_ID);
+  if (groups.length === 0) {
+    vscode.window.showWarningMessage(
+      `9Router Bridge: no "${VENDOR_ID}" provider added yet. ` +
+        `Add one from Chat: Manage Language Models first.`
+    );
+    return;
+  }
+
+  let target: ResolvedGroup;
+  if (groups.length === 1) {
+    target = groups[0];
+  } else {
+    const picked = await vscode.window.showQuickPick(
+      groups.map((group) => ({
+        label: group.name ?? group.baseUrl ?? "(unnamed)",
+        description: [
+          group.mode,
+          group.providers.length > 0 ? `providers: ${group.providers.join(", ")}` : "",
+          group.models.length > 0 ? `${group.models.length} models` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        group,
+      })),
+      { title: "9Router Bridge: select the provider to configure" }
+    );
+    if (!picked) {
+      return;
+    }
+    target = picked.group;
+  }
+
+  const modePick = await vscode.window.showQuickPick<ModeQuickPick>(
+    [
+      {
+        label: "$(server) Providers + combos",
+        description: "Everything 9Router exposes",
+        mode: "all",
+      },
+      {
+        label: "$(server) Providers only",
+        description: "No combos",
+        mode: "providers",
+      },
+      {
+        label: "$(symbol-misc) Combos only",
+        description: "Combos as selectable models",
+        mode: "combos",
+      },
+      {
+        label: "$(pulse) Pools",
+        description: "Display-only account pool status",
+        mode: "pools",
+      },
+    ],
+    {
+      title: `9Router · ${target.name ?? target.baseUrl}: content`,
+      placeHolder: `current: ${target.mode}`,
+    }
+  );
+  if (!modePick) {
+    return;
+  }
+  const mode = modePick.mode;
+
+  let providers = mode === "all" || mode === "providers" ? [...target.providers] : [];
+  if (mode === "all" || mode === "providers") {
+    const { entries } = await provider.entriesForGroup(
+      { name: target.name, baseUrl: target.baseUrl, mode },
+      { ignoreStoredFilters: true }
+    );
+    const aliases = [
+      ...new Set(
+        entries.filter((entry) => entry.kind === "provider").map((entry) => entry.alias)
+      ),
+    ].sort();
+    if (aliases.length > 0) {
+      const picked = await vscode.window.showQuickPick<AliasQuickPick>(
+        aliases.map((alias) => ({
+          label: alias,
+          description: `${entries.filter((entry) => entry.alias === alias).length} models`,
+          picked: target.providers.length === 0 || target.providers.includes(alias),
+          alias,
+        })),
+        {
+          canPickMany: true,
+          title: "Provider filter",
+          placeHolder: "Select providers to expose — none selected = all providers",
+        }
+      );
+      if (!picked) {
+        return;
+      }
+      providers = picked.map((item) => item.alias);
+    }
+  }
+
+  const scopePick = await vscode.window.showQuickPick(
+    [
+      {
+        label: "$(list-unordered) All models",
+        description: "No model filter",
+        filter: false,
+      },
+      {
+        label: "$(checklist) Choose models…",
+        description: "Pick exactly which models appear",
+        filter: true,
+      },
+    ],
+    {
+      title: "Model filter",
+      placeHolder:
+        target.models.length > 0 ? `current: ${target.models.length} selected` : "current: all models",
+    }
+  );
+  if (!scopePick) {
+    return;
+  }
+
+  let models = scopePick.filter ? [...target.models] : [];
+  if (scopePick.filter) {
+    const { entries } = await provider.entriesForGroup(
+      { name: target.name, baseUrl: target.baseUrl, mode },
+      { ignoreStoredFilters: true }
+    );
+    const selectable = entries.filter((entry) => entry.kind !== "pool");
+    if (selectable.length === 0) {
+      vscode.window.showWarningMessage(
+        `9Router Bridge: no models discovered for ${target.name ?? target.baseUrl}. Is 9Router running?`
+      );
+      return;
+    }
+    const chosen = await vscode.window.showQuickPick<ModelQuickPick>(
+      selectable.map((entry) => ({
+        label: entry.name,
+        description: entry.id,
+        picked: target.models.length === 0 || target.models.includes(entry.id),
+        modelId: entry.id,
+      })),
+      {
+        canPickMany: true,
+        title: `Models to expose · ${target.name ?? target.baseUrl}`,
+        placeHolder: "Select models to expose — none selected = all models",
+      }
+    );
+    if (!chosen) {
+      return;
+    }
+    models = chosen.map((item) => item.modelId);
+  }
+
+  const updated = updateGroupConfig(
+    { vendor: VENDOR_ID, name: target.name, baseUrl: target.baseUrl },
+    { mode, providers, models }
+  );
+  if (!updated) {
+    vscode.window.showErrorMessage(
+      "9Router Bridge: could not update chatLanguageModels.json (group entry not found)."
+    );
+    return;
+  }
+
+  provider.clearAll();
+  await provider.warmUp();
+
+  const summary = [`mode: ${mode}`];
+  if (providers.length > 0) {
+    summary.push(`providers: ${providers.join(", ")}`);
+  }
+  if (models.length > 0) {
+    summary.push(`${models.length} models`);
+  }
+  vscode.window.showInformationMessage(
+    `9Router Bridge: ${target.name ?? target.baseUrl} configured (${summary.join(" · ")}).`
+  );
+}
+
 function setIdleStatus(manifest: BridgeManifest | null): void {
   if (!manifest) {
     statusBarItem.text = "$(error) 9Router: offline";
@@ -224,6 +432,8 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
   private catalogs = new Map<string, { manifest: BridgeManifest | null; fetchedAt: number }>();
   private inFlight = new Map<string, Promise<BridgeManifest | null>>();
   private lastSignature = "";
+  /** Models 9Router reported as retired upstream (410) — hidden for the session. */
+  private readonly retiredModels = new Set<string>();
   private readonly toolContext = createToolNameContext();
 
   /** Last fetched catalog, used by status/pools commands. */
@@ -246,6 +456,8 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
       baseUrl: group.baseUrl,
       apiKey: group.apiKey ? "key" : "",
       mode: group.mode,
+      providers: group.providers,
+      models: group.models,
     });
   }
 
@@ -256,6 +468,8 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
         mode: config?.mode,
         groupName: config?.name,
         apiKey: config?.apiKey,
+        providers: config?.providers,
+        models: config?.models,
       },
       settingBaseUrl()
     );
@@ -287,10 +501,12 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
   }
 
   /**
-   * Discovered entries for a group, mapped for the group's mode.
+   * Discovered entries for a group with the Configure Provider filters and
+   * locally-retired (upstream 410) models applied.
    */
   async entriesForGroup(
-    config?: Record<string, unknown> | null
+    config?: Record<string, unknown> | null,
+    options: { ignoreStoredFilters?: boolean } = {}
   ): Promise<{ group: ResolvedGroup; entries: BridgeModelEntry[] }> {
     const group = this.resolve(config);
     const manifest = await this.getCatalog(group);
@@ -298,8 +514,34 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
       this.lastManifest = manifest;
       setIdleStatus(manifest);
     }
-    const entries = catalogModels(manifest, group.mode);
+    const filtered = options.ignoreStoredFilters
+      ? catalogModels(manifest, group.mode)
+      : applyGroupFilters(catalogModels(manifest, group.mode), {
+          providers: group.providers,
+          models: group.models,
+        });
+    const entries = filtered.filter((entry) => !this.retiredModels.has(entry.id));
     return { group, entries };
+  }
+
+  /**
+   * Drop a model from every group list after 9Router reported it as retired
+   * upstream. Session-scoped: `/v1/bridge` still lists it, so the filter stays
+   * applied until the extension restarts (or 9Router removes it).
+   */
+  retireModel(modelId: string): void {
+    if (this.retiredModels.has(modelId)) {
+      return;
+    }
+    this.retiredModels.add(modelId);
+    for (const [key, list] of this.groupLists) {
+      this.groupLists.set(
+        key,
+        list.filter((model) => model.id !== modelId)
+      );
+    }
+    log(`[9router-provider-bridge] retired model hidden: ${modelId}`, "warn");
+    this.fireChange();
   }
 
   async listForGroup(config?: Record<string, unknown> | null): Promise<vscode.LanguageModelChatInformation[]> {
@@ -340,6 +582,8 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
           ...(group.baseUrl ? { baseUrl: group.baseUrl } : {}),
           ...(group.apiKey ? { apiKey: group.apiKey } : {}),
           mode: group.mode,
+          ...(group.providers.length > 0 ? { providers: group.providers } : {}),
+          ...(group.models.length > 0 ? { models: group.models } : {}),
         };
         const list = await this.listForGroup(config);
         this.groupLists.set(this.groupKey(this.resolve(config)), list);
@@ -436,10 +680,20 @@ class BridgeProvider implements vscode.LanguageModelChatProvider {
         statusBarItem.show();
       }
     } catch (err) {
+      const message = (err as Error)?.message ?? String(err);
+      // 9Router reports upstream retirements as 410 Gone. Hide the model from
+      // the picker so it cannot be selected again this session, and surface a
+      // clear reason instead of the raw router error.
+      if (/(^|\D)410(\D|$)|retired/i.test(message)) {
+        this.retireModel(model.id);
+        throw new vscode.LanguageModelError(
+          `9Router: "${model.id}" was retired upstream and has been removed from the model picker. ${message}`
+        );
+      }
       if (err instanceof vscode.LanguageModelError) {
         throw err;
       }
-      throw new vscode.LanguageModelError(`9Router error: ${(err as Error).message}`);
+      throw new vscode.LanguageModelError(`9Router error: ${message}`);
     }
   }
 

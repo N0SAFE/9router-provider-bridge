@@ -94,9 +94,27 @@ health, so you can see cooling accounts before a request fails over.
 
 | Command                              | Description                                                        |
 | ------------------------------------ | ------------------------------------------------------------------ |
+| `9Router Bridge: Configure Provider` | Pick a group's mode, provider filter and model filter.             |
 | `9Router Bridge: Refresh Models`     | Clears the cache and re-reads 9Router.                             |
 | `9Router Bridge: Show Status`        | Catalog counts + per-pool summary.                                 |
 | `9Router Bridge: Show Pools`         | Quick pick with full pool details.                                 |
+
+### Filtering a provider group
+
+`9Router Bridge: Configure Provider` edits the selected group entry in
+`chatLanguageModels.json`:
+
+1. **Content** — providers + combos, providers only, combos only, or pools.
+2. **Provider filter** — optionally expose only some provider aliases
+   (e.g. `oc`, `ocg`); none selected means all active providers.
+3. **Model filter** — all models, or a hand-picked list of model ids/combo
+   names; none selected means all models.
+
+Filters are stored as optional `providers` / `models` arrays on the group.
+Leave them out and everything 9Router exposes is available. Free/public
+providers (e.g. OpenCode Free, alias `oc`) appear without any account and are
+labelled in their tooltip; models retired upstream (HTTP 410) are removed from
+the picker automatically when a request hits them.
 
 ## Settings
 

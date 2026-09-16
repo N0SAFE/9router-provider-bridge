@@ -132,6 +132,49 @@ function positiveNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+export interface GroupFilters {
+  /** Provider aliases to include (empty/absent = all providers). */
+  providers?: unknown;
+  /** Model ids to include (empty/absent = all models). */
+  models?: unknown;
+}
+
+export function stringListFrom(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+        .map((entry) => entry.trim())
+    : [];
+}
+
+/**
+ * Apply the optional per-group filters set from
+ * "9Router Bridge: Configure Provider":
+ * - `providers` keeps only provider models whose alias is listed (combos are
+ *   unaffected; use the `combos`/`providers` mode to include or exclude them),
+ * - `models` keeps only the listed model ids (provider models and combos).
+ * Empty or absent lists mean "no filter" — every discovered model is exposed.
+ */
+export function applyGroupFilters(
+  entries: BridgeModelEntry[],
+  filters: GroupFilters = {}
+): BridgeModelEntry[] {
+  const providers = stringListFrom(filters.providers);
+  const models = stringListFrom(filters.models);
+  if (providers.length === 0 && models.length === 0) {
+    return entries;
+  }
+  return entries.filter((entry) => {
+    if (models.length > 0 && !models.includes(entry.id)) {
+      return false;
+    }
+    if (providers.length > 0 && entry.kind === "provider" && !providers.includes(entry.alias)) {
+      return false;
+    }
+    return true;
+  });
+}
+
 /** A provider carries its pool nested; a pool row is flat. Normalize both. */
 export function poolOf(entity: BridgeProviderInfo | BridgePoolInfo | undefined): PoolSummary {
   if (!entity) {
@@ -175,14 +218,18 @@ export function describePool(pool: PoolSummary | undefined): string {
 
 export function poolTooltip(entity: BridgeProviderInfo | BridgePoolInfo): string {
   const pool = poolOf(entity);
-  const lines = [
-    entity.name,
-    describePool(pool),
-  ];
+  const lines = [entity.name];
+  if (entity.no_auth === true) {
+    lines.push("free/public provider — no account required");
+  } else {
+    lines.push(describePool(pool));
+  }
   if (pool.last_activity) {
     lines.push(`last activity: ${pool.last_activity}`);
   }
-  lines.push("accounts are selected server-side by the 9Router pool");
+  if (entity.no_auth !== true) {
+    lines.push("accounts are selected server-side by the 9Router pool");
+  }
   return lines.join("\n");
 }
 

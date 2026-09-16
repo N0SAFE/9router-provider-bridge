@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  applyGroupFilters,
   catalogModels,
   describePool,
   normalizeMode,
@@ -174,6 +175,32 @@ test('catalogModels: null manifest yields no entries', () => {
 test('catalogModels: provider and combo entries are selectable, pools are not', () => {
   assert.ok(catalogModels(manifest, 'all').every((entry) => entry.isUserSelectable));
   assert.ok(catalogModels(manifest, 'pools').every((entry) => !entry.isUserSelectable));
+});
+
+test('applyGroupFilters: no filters keeps every entry', () => {
+  const entries = catalogModels(manifest, 'all');
+  assert.deepEqual(applyGroupFilters(entries, {}), entries);
+  assert.deepEqual(applyGroupFilters(entries, { providers: [], models: [] }), entries);
+});
+
+test('applyGroupFilters: providers filter keeps only those provider models', () => {
+  const entries = applyGroupFilters(catalogModels(manifest, 'all'), { providers: ['ollama'] });
+  assert.deepEqual(entries.map((entry) => entry.id), ['ollama/minimax-m3', 'free']);
+});
+
+test('applyGroupFilters: models filter keeps only listed ids across providers and combos', () => {
+  const entries = applyGroupFilters(catalogModels(manifest, 'all'), {
+    models: ['ocg/kimi-k2.7-code', 'free'],
+  });
+  assert.deepEqual(entries.map((entry) => entry.id), ['ocg/kimi-k2.7-code', 'free']);
+});
+
+test('applyGroupFilters: providers and models combine', () => {
+  const entries = applyGroupFilters(catalogModels(manifest, 'all'), {
+    providers: ['ocg'],
+    models: ['ocg/kimi-k2.7-code'],
+  });
+  assert.deepEqual(entries.map((entry) => entry.id), ['ocg/kimi-k2.7-code']);
 });
 
 test('summarizeCatalog: counts models, combos, pools and account readiness', () => {
