@@ -249,7 +249,13 @@ export function registerCloudAgentSessions(
         title: session.title,
         history: buildHistory(session),
         requestHandler: async (request, _context, stream, requestToken) => {
+          const candidate = (request as { model?: { id?: string } }).model?.id;
+          const requestedModel =
+            candidate && candidate !== "auto" && !candidate.startsWith("copilot/")
+              ? candidate
+              : undefined;
           const model =
+            requestedModel ||
             modelByResource.get(id) ||
             session.model ||
             (await pickModel(endpoint, resolveDefaultModel));

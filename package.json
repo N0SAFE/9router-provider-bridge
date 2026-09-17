@@ -86,6 +86,9 @@
         "description": "Run this session on your 9Router host: workspace copies, 9Router models and combos, survives disconnects",
         "icon": "$(server)",
         "canDelegate": true,
+        "supportsAutoModel": true,
+        "requiresCopilotSignIn": false,
+        "requiresCustomModels": false,
         "welcomeTitle": "9Router Cloud session",
         "welcomeMessage": "This session runs on your 9Router host with a workspace copy. Send a message to start; fork or resume it any time."
       }
