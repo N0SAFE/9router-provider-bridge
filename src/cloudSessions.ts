@@ -263,8 +263,11 @@ export function registerCloudAgentSessions(
           // "Continue in 9Router" hands the previous conversation over as
           // references (the transcript attachment); inline it so the harness
           // keeps the context.
-          const referenceText = ((request as { references?: Array<{ name?: string; value?: unknown }> })
-            .references || [])
+          const references =
+            (request as unknown as {
+              references?: readonly { name?: string; value?: unknown }[];
+            }).references || [];
+          const referenceText = references
             .map((reference) => {
               const value = reference?.value;
               const text =
