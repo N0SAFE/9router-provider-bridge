@@ -80,10 +80,14 @@
     },
     "chatSessions": [
       {
-        "type": "9router",
+        "type": "agent-host-9router",
         "name": "9router",
         "displayName": "9Router Cloud",
-        "description": "Agent sessions running on your 9Router host with workspace copies and 9Router models"
+        "description": "Run this session on your 9Router host: workspace copies, 9Router models and combos, survives disconnects",
+        "icon": "$(server)",
+        "canDelegate": true,
+        "welcomeTitle": "9Router Cloud session",
+        "welcomeMessage": "This session runs on your 9Router host with a workspace copy. Send a message to start; fork or resume it any time."
       }
     ],
     "languageModelChatProviders": [

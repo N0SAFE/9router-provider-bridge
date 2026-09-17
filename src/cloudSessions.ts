@@ -15,8 +15,8 @@ import * as vscode from "vscode";
 import type { RemoteEndpoint } from "./remote.js";
 import { log } from "./logger.js";
 
-const SESSION_TYPE = "9router";
-const SCHEME = "9router";
+const SESSION_TYPE = "agent-host-9router";
+const SCHEME = "agent-host-9router";
 const POLL_MS = 15000;
 
 interface CloudSessionSummary {
@@ -370,6 +370,7 @@ export function registerCloudAgentSessions(
       supportsInterruptions: true,
     }) ?? { dispose: () => undefined }
   );
+  log(`Cloud sessions registered (type ${SESSION_TYPE})`, "info");
 
   void refreshItems();
   const timer = setInterval(() => void refreshItems(), POLL_MS);
