@@ -415,6 +415,37 @@ export interface GroupConfigPatch {
 }
 
 /**
+ * Append a new group entry to the user's chatLanguageModels.json (only into
+ * files that already exist). Returns false when the group already exists or no
+ * config file is found.
+ */
+export function appendGroupToConfig(
+  entry: { name: string; vendor: string; baseUrl?: string; apiKey?: string; mode?: string },
+  files: string[] = defaultGroupConfigPaths()
+): boolean {
+  if (!entry?.name || !entry?.vendor) {
+    return false;
+  }
+  for (const file of files) {
+    if (!fs.existsSync(file)) {
+      continue;
+    }
+    try {
+      const groups = parseGroupsConfig(fs.readFileSync(file, "utf8"));
+      if (groups.some((group) => group && group.vendor === entry.vendor && group.name === entry.name)) {
+        return false;
+      }
+      groups.push(entry);
+      fs.writeFileSync(file, JSON.stringify(groups, null, 2) + "\n");
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+/**
  * Persist the Configure Provider choices into the matching group entry in
  * chatLanguageModels.json: `mode` plus optional `providers`/`models` filters.
  * Empty filters and mode "all" remove the property so files stay clean.

@@ -47,10 +47,21 @@ import {
   readVendorGroups,
   resolveGroup,
   updateGroupConfig,
+  appendGroupToConfig,
   type ResolvedGroup,
 } from "./gateway.js";
+import {
+  connectSteps,
+  fetchRemoteLogs,
+  fetchRemoteStatus,
+  resolveRemoteEndpoint,
+  startRemoteAgent,
+  stopRemoteAgent,
+  type RemoteEndpoint,
+} from "./remote.js";
 import { initLogger, log } from "./logger.js";
 import { createToolNameContext, streamBridgeResponse } from "./provider.js";
+import { registerCloudAgentSessions } from "./cloudSessions.js";
 
 const PKG_NAME = "9router-provider-bridge";
 const DEFAULT_BASE_URL = "http://127.0.0.1:20128/v1";
@@ -154,6 +165,46 @@ export function activate(context: vscode.ExtensionContext): void {
       configureProvider(provider)
     )
   );
+
+  const remoteCommand =
+    (action: (endpoint: RemoteEndpoint) => Promise<void>) => async () => {
+      const endpoint = requireRemote();
+      if (!endpoint) {
+        return;
+      }
+      try {
+        await action(endpoint);
+      } catch (err) {
+        vscode.window.showErrorMessage(`9Router Remote: ${(err as Error).message}`);
+      }
+    };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(`${PKG_NAME}.remoteStatus`, remoteCommand(showRemoteStatus)),
+    vscode.commands.registerCommand(`${PKG_NAME}.remoteStart`, remoteCommand(startRemote)),
+    vscode.commands.registerCommand(`${PKG_NAME}.remoteStop`, remoteCommand(stopRemote)),
+    vscode.commands.registerCommand(`${PKG_NAME}.remoteLogs`, remoteCommand(showRemoteLogs)),
+    vscode.commands.registerCommand(`${PKG_NAME}.addRemoteProvider`, () =>
+      addRemoteProvider().catch((err) =>
+        vscode.window.showErrorMessage(`9Router Remote: ${(err as Error).message}`)
+      )
+    )
+  );
+
+  // Cloud agent sessions (native chat session type backed by the 9Router host).
+  try {
+    registerCloudAgentSessions(
+      context,
+      () => resolveRemoteEndpoint(readVendorGroups(VENDOR_ID), settingBaseUrl()),
+      () =>
+        vscode.workspace
+          .getConfiguration()
+          .get<string>(`${PKG_NAME}.remoteSessionModel`)
+          ?.trim() || undefined
+    );
+  } catch (err) {
+    log(`Cloud sessions registration failed: ${(err as Error).message}`, "warn");
+  }
 }
 
 export function deactivate(): void {
@@ -475,6 +526,129 @@ async function configureProvider(provider: BridgeProvider, preselectedGroup?: st
 }
 
 let knownProviderGroups: Set<string> | null = null;
+
+// ---------------------------------------------------------------------------
+// REMOTE AGENT (VS Code Agent Host on the 9Router machine)
+// ---------------------------------------------------------------------------
+
+let remoteLogChannel: vscode.OutputChannel | null = null;
+
+function resolveRemote(): RemoteEndpoint | null {
+  const groups = readVendorGroups(VENDOR_ID);
+  return resolveRemoteEndpoint(groups, settingBaseUrl());
+}
+
+function remoteDashboardUrl(endpoint: RemoteEndpoint): string {
+  return `${endpoint.root}/dashboard/remote`;
+}
+
+function requireRemote(): RemoteEndpoint | null {
+  const endpoint = resolveRemote();
+  if (!endpoint) {
+    vscode.window.showWarningMessage(
+      `9Router Bridge: no 9Router instance configured. Add a provider group first.`
+    );
+    return null;
+  }
+  return endpoint;
+}
+
+async function showRemoteStatus(endpoint: RemoteEndpoint): Promise<void> {
+  const status = await fetchRemoteStatus(endpoint);
+  const running = Boolean(status.state?.running);
+  const lines = [
+    running
+      ? `running · tunnel ${status.state?.name || "?"} · pid ${status.state?.pid || "?"}`
+      : "stopped",
+    `${status.endpoints?.length || 0} endpoint(s) · ${status.sessions?.length || 0} session(s) · ${status.workspaces?.length || 0} workspace(s)`,
+    "",
+    connectSteps(status),
+  ];
+  const action = await vscode.window.showInformationMessage(
+    `9Router Remote Agent\n${lines.join("\n")}`,
+    { modal: true },
+    "Copy steps",
+    "Open dashboard"
+  );
+  if (action === "Copy steps") {
+    await vscode.env.clipboard.writeText(connectSteps(status));
+  } else if (action === "Open dashboard") {
+    await vscode.env.openExternal(vscode.Uri.parse(remoteDashboardUrl(endpoint)));
+  }
+}
+
+async function startRemote(endpoint: RemoteEndpoint): Promise<void> {
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: "9Router: starting remote agent host…" },
+    async () => {
+      const result = await startRemoteAgent(endpoint);
+      const action = await vscode.window.showInformationMessage(
+        `9Router remote agent started (tunnel ${result.state?.name || "?"}).`,
+        "Copy steps",
+        "Open dashboard",
+        "Show logs"
+      );
+      if (action === "Copy steps") {
+        await vscode.env.clipboard.writeText(connectSteps(result));
+      } else if (action === "Open dashboard") {
+        await vscode.env.openExternal(vscode.Uri.parse(remoteDashboardUrl(endpoint)));
+      } else if (action === "Show logs") {
+        await showRemoteLogs(endpoint);
+      }
+    }
+  );
+}
+
+async function stopRemote(endpoint: RemoteEndpoint): Promise<void> {
+  await stopRemoteAgent(endpoint);
+  vscode.window.showInformationMessage("9Router remote agent stopped.");
+}
+
+async function showRemoteLogs(endpoint: RemoteEndpoint): Promise<void> {
+  const logs = await fetchRemoteLogs(endpoint, 300);
+  if (!remoteLogChannel) {
+    remoteLogChannel = vscode.window.createOutputChannel("9Router Remote");
+  }
+  remoteLogChannel.clear();
+  remoteLogChannel.appendLine(
+    logs || "(no output yet — the first start asks for GitHub/Microsoft auth here)"
+  );
+  remoteLogChannel.show(true);
+}
+
+async function addRemoteProvider(): Promise<void> {
+  const url = await vscode.window.showInputBox({
+    title: "9Router remote base URL",
+    prompt: "OpenAI-compatible base URL of the remote 9Router instance",
+    value: settingBaseUrl(),
+    ignoreFocusOut: true,
+  });
+  if (!url) {
+    return;
+  }
+  const key = await vscode.window.showInputBox({
+    title: "9Router remote API key (optional)",
+    prompt: "Leave empty when the remote instance does not require a key",
+    password: true,
+    ignoreFocusOut: true,
+  });
+  const created = appendGroupToConfig({
+    name: "9Router Remote",
+    vendor: VENDOR_ID,
+    baseUrl: url.trim(),
+    ...(key && key.trim() ? { apiKey: key.trim() } : {}),
+    mode: "all",
+  });
+  if (!created) {
+    vscode.window.showWarningMessage(
+      `9Router Bridge: group "9Router Remote" already exists (or chatLanguageModels.json was not found).`
+    );
+    return;
+  }
+  vscode.window.showInformationMessage(
+    `9Router Bridge: remote provider group added — reload the window to see the remote models.`
+  );
+}
 
 /**
  * Notify when a new provider group appears in chatLanguageModels.json — e.g.

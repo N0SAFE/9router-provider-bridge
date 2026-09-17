@@ -41,6 +41,9 @@
   "activationEvents": [
     "onStartupFinished"
   ],
+  "enabledApiProposals": [
+    "chatSessionsProvider"
+  ],
   "main": "./dist/extension.cjs",
   "contributes": {
     "configuration": {
@@ -67,9 +70,22 @@
           "type": "string",
           "default": "http://127.0.0.1:20128/v1",
           "description": "Default 9Router base URL. Used when a chatLanguageModels.json group does not set its own baseUrl."
+        },
+        "9router-provider-bridge.remoteSessionModel": {
+          "type": "string",
+          "default": "",
+          "description": "Model or combo used by new 9Router cloud agent sessions (e.g. free or ocg/deepseek-flash). Empty picks the first catalog entry (combos first)."
         }
       }
     },
+    "chatSessions": [
+      {
+        "type": "9router",
+        "name": "9router",
+        "displayName": "9Router Cloud",
+        "description": "Agent sessions running on your 9Router host with workspace copies and 9Router models"
+      }
+    ],
     "languageModelChatProviders": [
       {
         "vendor": "9router-provider-bridge",
@@ -147,6 +163,26 @@
       {
         "command": "9router-provider-bridge.configureProvider",
         "title": "9Router Bridge: Configure Provider"
+      },
+      {
+        "command": "9router-provider-bridge.remoteStatus",
+        "title": "9Router Bridge: Remote Agent Status"
+      },
+      {
+        "command": "9router-provider-bridge.remoteStart",
+        "title": "9Router Bridge: Start Remote Agent"
+      },
+      {
+        "command": "9router-provider-bridge.remoteStop",
+        "title": "9Router Bridge: Stop Remote Agent"
+      },
+      {
+        "command": "9router-provider-bridge.remoteLogs",
+        "title": "9Router Bridge: Show Remote Agent Logs"
+      },
+      {
+        "command": "9router-provider-bridge.addRemoteProvider",
+        "title": "9Router Bridge: Add Remote Provider"
       }
     ]
   },
