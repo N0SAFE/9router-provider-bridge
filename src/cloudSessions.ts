@@ -259,6 +259,29 @@ export function registerCloudAgentSessions(
             modelByResource.get(id) ||
             session.model ||
             (await pickModel(endpoint, resolveDefaultModel));
+
+          // "Continue in 9Router" hands the previous conversation over as
+          // references (the transcript attachment); inline it so the harness
+          // keeps the context.
+          const referenceText = ((request as { references?: Array<{ name?: string; value?: unknown }> })
+            .references || [])
+            .map((reference) => {
+              const value = reference?.value;
+              const text =
+                typeof value === "string"
+                  ? value
+                  : value == null
+                    ? ""
+                    : JSON.stringify(value);
+              return text
+                ? `### ${reference?.name || "context"}\n${text.slice(0, 20000)}`
+                : "";
+            })
+            .filter(Boolean)
+            .join("\n\n");
+          const prompt = referenceText
+            ? `${referenceText}\n\nUser: ${request.prompt}`
+            : request.prompt;
           const controllerAbort = new AbortController();
           requestToken.onCancellationRequested(() => controllerAbort.abort());
           try {
@@ -269,7 +292,7 @@ export function registerCloudAgentSessions(
                 "Content-Type": "application/json",
                 ...(endpoint.apiKey ? { Authorization: `Bearer ${endpoint.apiKey}` } : {}),
               },
-              body: JSON.stringify({ prompt: request.prompt, model }),
+              body: JSON.stringify({ prompt, model }),
               signal: controllerAbort.signal,
             });
             if (!response.ok || !response.body) {
