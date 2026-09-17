@@ -17,8 +17,8 @@
     "vscode": "^1.120.0"
   },
   "extensionKind": [
-    "ui",
-    "workspace"
+    "workspace",
+    "ui"
   ],
   "categories": [
     "AI",
@@ -40,9 +40,6 @@
   "pricing": "Free",
   "activationEvents": [
     "onStartupFinished"
-  ],
-  "enabledApiProposals": [
-    "chatSessionsProvider"
   ],
   "main": "./dist/extension.cjs",
   "contributes": {
@@ -70,29 +67,9 @@
           "type": "string",
           "default": "http://127.0.0.1:20128/v1",
           "description": "Default 9Router base URL. Used when a chatLanguageModels.json group does not set its own baseUrl."
-        },
-        "9router-provider-bridge.remoteSessionModel": {
-          "type": "string",
-          "default": "",
-          "description": "Model or combo used by new 9Router cloud agent sessions (e.g. free or ocg/deepseek-flash). Empty picks the first catalog entry (combos first)."
         }
       }
     },
-    "chatSessions": [
-      {
-        "type": "agent-host-9router",
-        "name": "9router",
-        "displayName": "9Router Cloud",
-        "description": "Run this session on your 9Router host: workspace copies, 9Router models and combos, survives disconnects",
-        "icon": "$(server)",
-        "canDelegate": true,
-        "supportsAutoModel": true,
-        "requiresCopilotSignIn": false,
-        "requiresCustomModels": false,
-        "welcomeTitle": "9Router Cloud session",
-        "welcomeMessage": "This session runs on your 9Router host with a workspace copy. Send a message to start; fork or resume it any time."
-      }
-    ],
     "languageModelChatProviders": [
       {
         "vendor": "9router-provider-bridge",
@@ -190,6 +167,10 @@
       {
         "command": "9router-provider-bridge.addRemoteProvider",
         "title": "9Router Bridge: Add Remote Provider"
+      },
+      {
+        "command": "9router-provider-bridge.addLocalProvider",
+        "title": "9Router Bridge: Add This Machine as Provider"
       }
     ]
   },

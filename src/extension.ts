@@ -61,7 +61,6 @@ import {
 } from "./remote.js";
 import { initLogger, log } from "./logger.js";
 import { createToolNameContext, streamBridgeResponse } from "./provider.js";
-import { registerCloudAgentSessions } from "./cloudSessions.js";
 
 const PKG_NAME = "9router-provider-bridge";
 const DEFAULT_BASE_URL = "http://127.0.0.1:20128/v1";
@@ -188,22 +187,27 @@ export function activate(context: vscode.ExtensionContext): void {
       addRemoteProvider().catch((err) =>
         vscode.window.showErrorMessage(`9Router Remote: ${(err as Error).message}`)
       )
+    ),
+    vscode.commands.registerCommand(`${PKG_NAME}.addLocalProvider`, () =>
+      addLocalProvider().catch((err) =>
+        vscode.window.showErrorMessage(`9Router Bridge: ${(err as Error).message}`)
+      )
     )
   );
 
-  // Cloud agent sessions (native chat session type backed by the 9Router host).
-  try {
-    registerCloudAgentSessions(
-      context,
-      () => resolveRemoteEndpoint(readVendorGroups(VENDOR_ID), settingBaseUrl()),
-      () =>
-        vscode.workspace
-          .getConfiguration()
-          .get<string>(`${PKG_NAME}.remoteSessionModel`)
-          ?.trim() || undefined
-    );
-  } catch (err) {
-    log(`Cloud sessions registration failed: ${(err as Error).message}`, "warn");
+  // Remote window (tunnel/SSH): offer to point the bridge at this machine's
+  // 9Router so the chat harness running here uses its models.
+  if (vscode.env.remoteName && readVendorGroups(VENDOR_ID).length === 0) {
+    void vscode.window
+      .showInformationMessage(
+        `9Router Bridge: this is a remote window (${vscode.env.remoteName}). Add this machine's 9Router as a provider?`,
+        "Add provider"
+      )
+      .then((choice) => {
+        if (choice === "Add provider") {
+          void addLocalProvider();
+        }
+      });
   }
 }
 
@@ -614,6 +618,25 @@ async function showRemoteLogs(endpoint: RemoteEndpoint): Promise<void> {
     logs || "(no output yet — the first start asks for GitHub/Microsoft auth here)"
   );
   remoteLogChannel.show(true);
+}
+
+async function addLocalProvider(): Promise<void> {
+  const url = settingBaseUrl();
+  const created = appendGroupToConfig({
+    name: "9Router (this machine)",
+    vendor: VENDOR_ID,
+    baseUrl: url,
+    mode: "all",
+  });
+  if (!created) {
+    vscode.window.showWarningMessage(
+      `9Router Bridge: group "9Router (this machine)" already exists (or chatLanguageModels.json was not found).`
+    );
+    return;
+  }
+  vscode.window.showInformationMessage(
+    `9Router Bridge: added ${url} as a provider for this window — reload to see its models.`
+  );
 }
 
 async function addRemoteProvider(): Promise<void> {

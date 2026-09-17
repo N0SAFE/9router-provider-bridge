@@ -142,6 +142,36 @@ The bridge uses 9Router's read-only discovery API:
 Older 9Router builds without `/v1/bridge` fall back to `/v1/models`
 (+ `/v1/pools` when present).
 
+## Remote workspaces (tunnel / SSH) and the Agent Host
+
+The bridge prefers the **workspace extension host** (`extensionKind:
+["workspace", "ui"]`). When you connect to a remote workspace — VS Code
+**Remote Tunnels** or SSH — the bridge runs on that machine and serves that
+machine's 9Router models to the normal VS Code chat harness, so tools, the
+terminal, MCP servers and the model picker all run remotely.
+
+Setup (9Router side, `/dashboard/remote`):
+
+1. Start the **Remote Workspace Tunnel** and authorize the GitHub device code.
+2. Connect from the desktop **Remote - Tunnels** extension or open
+   `https://vscode.dev/tunnel/<name>` and open a folder on the host.
+3. In the remote window run **9Router Bridge: Add This Machine as Provider**
+   (adds a group with `baseUrl: http://127.0.0.1:20128/v1`) and reload.
+4. Pick a 9Router model in Chat — requests and tools stay on the host.
+
+Commands:
+
+| Command                                           | Purpose                                              |
+| ------------------------------------------------- | ---------------------------------------------------- |
+| `9Router Bridge: Add This Machine as Provider`    | Points this window at its local 9Router instance.    |
+| `9Router Bridge: Add Remote Provider`             | Adds a group for a 9Router on another machine.       |
+| `9Router Bridge: Remote Agent Status/Start/Stop`  | Manages VS Code's Agent Host + dev tunnel on a host. |
+| `9Router Bridge: Show Remote Agent Logs`          | Agent host CLI output (first run asks for auth).     |
+
+The Agent Host path (`Remote Agent → Start`) is for the **Agents window**
+harnesses (Copilot/Claude/Codex) with handoff, and reads its model config
+from the host's CLI tools.
+
 ## Development
 
 ```sh
