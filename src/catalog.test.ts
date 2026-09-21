@@ -137,8 +137,46 @@ test('catalogModels(providers): active providers only, names prefixed, caps mapp
   assert.equal(entries[2].isUserSelectable, true);
 });
 
-test('catalogModels(all): providers plus combos', () => {
-  const entries = catalogModels(manifest, 'all');
+test('catalogModels(providers): capabilities come from the model list (either spelling)', () => {
+  const local: BridgeManifest = {
+    providers: [
+      {
+        object: 'provider',
+        id: 'opencode-go',
+        alias: 'ocg',
+        name: 'OpenCode Go',
+        pool: { connections: 1, ready: 1, cooling: 0, unavailable: 0, locks: 0 },
+        models: [
+          {
+            id: 'ocg/deepseek-v4.1-flash',
+            name: 'DeepSeek V4.1 Flash',
+            capabilities: { vision: true, tools: true, reasoning: true, contextWindow: 1000000, maxOutput: 384000 },
+          },
+          // Older/alternate payload shapes must work too — no model-name guessing.
+          { id: 'ocg/legacy-spelling', name: 'Legacy', capabilities: { imageInput: true, toolCalling: true } },
+          { id: 'ocg/text-only', name: 'Text only', capabilities: { tools: true } },
+        ],
+      },
+    ],
+    pools: [],
+    combos: [],
+  };
+
+  const entries = catalogModels(local, 'providers');
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  assert.equal(byId.get('ocg/deepseek-v4.1-flash')?.imageInput, true);
+  assert.equal(byId.get('ocg/deepseek-v4.1-flash')?.toolCalling, true);
+  assert.equal(byId.get('ocg/deepseek-v4.1-flash')?.contextLength, 1000000);
+  assert.equal(byId.get('ocg/deepseek-v4.1-flash')?.maxOutput, 384000);
+  assert.equal(byId.get('ocg/legacy-spelling')?.imageInput, true);
+  assert.equal(byId.get('ocg/legacy-spelling')?.toolCalling, true);
+  assert.equal(byId.get('ocg/text-only')?.imageInput, false);
+  assert.equal(byId.get('ocg/text-only')?.toolCalling, true);
+  // The picker tooltip lists what the listing declared.
+  assert.ok(byId.get('ocg/deepseek-v4.1-flash')?.tooltip?.includes('vision · tools · reasoning'));
+});
+
+test('catalogModels(all): providers plus combos', () => {  const entries = catalogModels(manifest, 'all');
   assert.equal(entries.length, 4);
   const combo = entries.find((entry) => entry.kind === 'combo');
   assert.ok(combo);

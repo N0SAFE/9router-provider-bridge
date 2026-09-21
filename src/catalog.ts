@@ -300,6 +300,27 @@ function resolveComboLimits(
 }
 
 /**
+ * Human line describing the capabilities 9Router reported for a model. Built
+ * purely from the model list payload — no model names are special-cased here.
+ */
+function describeCapabilities(caps: BridgeCapabilities | undefined): string | null {
+  if (!caps) {
+    return null;
+  }
+  const flags: string[] = [];
+  if (caps.vision === true) flags.push("vision");
+  if (caps.pdf === true) flags.push("pdf");
+  if (caps.audioInput === true) flags.push("audio");
+  if (caps.videoInput === true) flags.push("video");
+  if (caps.imageOutput === true) flags.push("image-out");
+  if (caps.audioOutput === true) flags.push("audio-out");
+  if (caps.search === true) flags.push("search");
+  if (caps.tools === true) flags.push("tools");
+  if (caps.reasoning === true) flags.push("reasoning");
+  return flags.length > 0 ? flags.join(" · ") : null;
+}
+
+/**
  * Map a bridge manifest to picker entries for the requested mode.
  *
  * - `providers`/`all`: provider models, active providers only (the manifest
@@ -337,12 +358,13 @@ export function catalogModels(
     for (const partition of partitions) {
       for (const model of partition.models) {
         const caps = model.capabilities ?? {};
+        const capabilitiesLine = describeCapabilities(caps);
         const entry: BridgeModelEntry = {
           id: model.id,
           name: `${partition.name} · ${model.name || model.id}`,
           family: partition.alias,
           detail: poolDetail,
-          tooltip: poolTip,
+          tooltip: capabilitiesLine ? `${poolTip}\n\n${capabilitiesLine}` : poolTip,
           contextLength: positiveNumber(
             model.context_length,
             positiveNumber(caps.contextWindow, DEFAULT_CONTEXT_LENGTH)
@@ -351,8 +373,10 @@ export function catalogModels(
             model.max_completion_tokens,
             positiveNumber(caps.maxOutput, DEFAULT_MAX_OUTPUT)
           ),
-          imageInput: caps.vision === true,
-          toolCalling: caps.tools === true,
+          // `vision`/`tools` are the names 9Router uses; accept the VS Code
+          // capability spellings too so either payload shape works.
+          imageInput: caps.vision === true || caps.imageInput === true,
+          toolCalling: caps.tools === true || caps.toolCalling === true,
           isUserSelectable: true,
           kind: "provider",
           alias: partition.alias,
