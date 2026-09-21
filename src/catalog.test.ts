@@ -151,6 +151,11 @@ test('catalogModels(providers): capabilities come from the model list (either sp
             id: 'ocg/deepseek-v4.1-flash',
             name: 'DeepSeek V4.1 Flash',
             capabilities: { vision: true, tools: true, reasoning: true, contextWindow: 1000000, maxOutput: 384000 },
+            parameters: {
+              reasoning_effort: { supported: true, type: 'enum', values: ['none', 'low', 'medium', 'high'] },
+              temperature: { supported: false },
+              max_tokens: { supported: true, max: 384000 },
+            },
           },
           // Older/alternate payload shapes must work too — no model-name guessing.
           { id: 'ocg/legacy-spelling', name: 'Legacy', capabilities: { imageInput: true, toolCalling: true } },
@@ -172,9 +177,17 @@ test('catalogModels(providers): capabilities come from the model list (either sp
   assert.equal(byId.get('ocg/legacy-spelling')?.toolCalling, true);
   assert.equal(byId.get('ocg/text-only')?.imageInput, false);
   assert.equal(byId.get('ocg/text-only')?.toolCalling, true);
-  // The picker tooltip lists what the listing declared.
-  assert.ok(byId.get('ocg/deepseek-v4.1-flash')?.tooltip?.includes('vision · tools · reasoning'));
+  // The picker tooltip lists what the listing declared: capabilities + settings.
+  const tooltip = byId.get('ocg/deepseek-v4.1-flash')?.tooltip ?? '';
+  expectTooltip(tooltip);
 });
+
+function expectTooltip(tooltip: string): void {
+  assert.ok(tooltip.includes('vision · tools · reasoning'));
+  assert.ok(tooltip.includes('effort: none·low·medium·high'));
+  assert.ok(tooltip.includes('temp ✕'));
+  assert.ok(tooltip.includes('max out 384000'));
+}
 
 test('catalogModels(all): providers plus combos', () => {  const entries = catalogModels(manifest, 'all');
   assert.equal(entries.length, 4);

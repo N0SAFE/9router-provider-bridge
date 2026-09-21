@@ -37,6 +37,20 @@ export interface BridgeCapabilities {
   [key: string]: unknown;
 }
 
+/** Per-parameter settings published by 9Router (reasoning levels, temp, …). */
+export interface BridgeParameterSetting {
+  supported?: boolean;
+  type?: string;
+  values?: string[] | null;
+  range?: { min?: number; max?: number };
+  max?: number;
+  alias?: string[];
+  default?: unknown;
+  format?: string | null;
+  canDisable?: boolean;
+  budgetTokens?: { min?: number | null; max?: number | null } | null;
+}
+
 export interface BridgeModelInfo {
   id: string;
   name?: string;
@@ -44,6 +58,8 @@ export interface BridgeModelInfo {
   owned_by?: string;
   kind?: string;
   capabilities?: BridgeCapabilities;
+  /** Which request parameters the model accepts (from the listing). */
+  parameters?: Record<string, BridgeParameterSetting>;
   context_length?: number;
   max_completion_tokens?: number;
   /** Upstream marks the model as free (OpenRouter pricing 0/0). */
@@ -321,6 +337,29 @@ function describeCapabilities(caps: BridgeCapabilities | undefined): string | nu
 }
 
 /**
+ * Human line describing the request settings 9Router published for a model
+ * (reasoning levels, thinking budget, temperature support, output ceiling).
+ * Purely data-driven — nothing is special-cased by model name.
+ */
+function describeModelSettings(parameters: Record<string, BridgeParameterSetting> | undefined): string | null {
+  if (!parameters) {
+    return null;
+  }
+  const parts: string[] = [];
+  const effort = parameters.reasoning_effort;
+  if (effort?.supported) {
+    parts.push(effort.values?.length ? `effort: ${effort.values.join("·")}` : "effort: on");
+  }
+  const thinking = parameters.thinking;
+  if (thinking?.supported && thinking.budgetTokens && (thinking.budgetTokens.min || thinking.budgetTokens.max)) {
+    parts.push(`thinking ${thinking.budgetTokens.min ?? "?"}–${thinking.budgetTokens.max ?? "?"}`);
+  }
+  if (parameters.temperature?.supported === false) parts.push("temp ✕");
+  if (typeof parameters.max_tokens?.max === "number") parts.push(`max out ${parameters.max_tokens.max}`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/**
  * Map a bridge manifest to picker entries for the requested mode.
  *
  * - `providers`/`all`: provider models, active providers only (the manifest
@@ -359,12 +398,14 @@ export function catalogModels(
       for (const model of partition.models) {
         const caps = model.capabilities ?? {};
         const capabilitiesLine = describeCapabilities(caps);
+        const settingsLine = describeModelSettings(model.parameters);
+        const tooltipLines = [poolTip, capabilitiesLine, settingsLine].filter(Boolean);
         const entry: BridgeModelEntry = {
           id: model.id,
           name: `${partition.name} · ${model.name || model.id}`,
           family: partition.alias,
           detail: poolDetail,
-          tooltip: capabilitiesLine ? `${poolTip}\n\n${capabilitiesLine}` : poolTip,
+          tooltip: tooltipLines.join("\n\n"),
           contextLength: positiveNumber(
             model.context_length,
             positiveNumber(caps.contextWindow, DEFAULT_CONTEXT_LENGTH)
