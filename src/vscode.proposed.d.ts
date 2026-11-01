@@ -37,6 +37,16 @@ declare module 'vscode' {
     readonly isUserSelectable?: boolean;
 
     /**
+     * Per-model configuration schema. VS Code renders a "Configure Model"
+     * action (and validates/persists the values in chatLanguageModels.json)
+     * from this schema, then returns them in
+     * ProvideLanguageModelChatResponseOptions.modelConfiguration.
+     */
+    readonly configurationSchema?: {
+      readonly [key: string]: any;
+    };
+
+    /**
      * Per-group configuration (from chatLanguageModels.json) attached by the
      * provider to each model. Round-trips into provideLanguageModelChatResponse.
      */

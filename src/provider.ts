@@ -18,6 +18,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { cleanUpstreamMessage } from "./providerError.js";
 import { extractTextFromToolResult, simplifySchema } from "./providerUtils.js";
 import { normalizeToolCallInput, normalizeToolName } from "./toolInput.js";
+import { BRIDGE_PROVIDER_NAME, resolveModelOptions } from "./modelOptions.js";
 import {
   EMPTY_TURN_FALLBACK_TEXT,
   isEmptyTurn,
@@ -78,8 +79,15 @@ function withThinkingMetadata(
 export async function streamBridgeResponse(request: BridgeStreamRequest): Promise<BridgeUsage | null> {
   const { modelId, baseUrl, apiKey, messages, options, progress, token, toolContext } = request;
 
+  // Per-model configuration (chatLanguageModels.json / "Configure Model") is
+  // resolved by VS Code and forwarded to the upstream request here.
+  const modelOptions = resolveModelOptions(options.modelConfiguration);
+  if (Object.keys(modelOptions.standardized).length > 0 || Object.keys(modelOptions.providerOptions).length > 0) {
+    log(`[9router-provider-bridge] model options for ${modelId}: ${JSON.stringify(modelOptions)}`, "debug");
+  }
+
   const provider = createOpenAICompatible({
-    name: "9router",
+    name: BRIDGE_PROVIDER_NAME,
     baseURL: baseUrl,
     ...(apiKey ? { apiKey } : {}),
     fetch: VERBOSE_FETCH,
@@ -129,6 +137,10 @@ export async function streamBridgeResponse(request: BridgeStreamRequest): Promis
           // The 9Router account pool owns retries/fallback; an SDK retry would
           // double-consume accounts and bypass the pool's quota handling.
           maxRetries: 0,
+          ...modelOptions.standardized,
+          ...(Object.keys(modelOptions.providerOptions).length > 0
+            ? { providerOptions: modelOptions.providerOptions }
+            : {}),
         });
 
         let hasText = false;

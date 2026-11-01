@@ -106,6 +106,7 @@ function toVSCodeModel(
       toolCalling: entry.toolCalling,
     },
     isUserSelectable: entry.isUserSelectable,
+    configurationSchema: entry.configurationSchema,
     configuration: {
       ...(forwarded ?? {}),
       baseUrl: group.baseUrl,

@@ -30,9 +30,10 @@ provider.ts  streamBridgeResponse()
 | Module              | Responsibility                                                                  |
 | ------------------- | ------------------------------------------------------------------------------- |
 | `src/extension.ts`  | Activation, vendor id, status bar, commands, `BridgeProvider`, catalog cache.   |
-| `src/catalog.ts`    | Discovery payload types and pure mapping to picker entries (no vscode).         |
+| `src/catalog.ts`    | Discovery payload types, picker entries and per-model configuration schemas (no vscode). |
 | `src/client.ts`     | HTTP client for `/v1/bridge` and the `/v1/models` fallback (fetch injectable).  |
-| `src/provider.ts`   | Message/tool conversion, streaming, usage and error classification.             |
+| `src/provider.ts`   | Message/tool conversion, streaming, per-model configuration, usage and error classification. |
+| `src/modelOptions.ts` | Per-model configuration → AI SDK call options (no vscode).                    |
 | `src/gateway.ts`    | chatLanguageModels.json group resolution (baseUrl/apiKey/mode).                 |
 | `src/logger.ts`     | Output panel logging, `logLevel` setting.                                       |
 | `src/providerError.ts` | Upstream error body → readable single-line message.                         |
@@ -40,6 +41,31 @@ provider.ts  streamBridgeResponse()
 | `src/toolInput.ts`  | Tool-call input/name normalization for Copilot's protocol.                      |
 | `src/turnGuard.ts`  | Empty-turn retry policy (reasoning-only turns).                                 |
 | `src/verboseFetch.ts` | Debug-level SSE logging fetch wrapper.                                        |
+
+## Per-model configuration
+
+`catalogModels()` derives a VS Code configuration schema from the request
+parameters 9Router publishes per model (`parameters`): the reasoning-effort
+levels plus the numeric sampling parameters the model accepts. VS Code renders
+the *Configure Model* action from that schema and stores the values in
+`chatLanguageModels.json` (the group's `settings[<model id>]` map). The resolved
+values come back in
+`ProvideLanguageModelChatResponseOptions.modelConfiguration`, and
+`modelOptions.ts` maps them onto the AI SDK call:
+
+- standardized settings (`temperature`, `topP`, `maxOutputTokens`,
+  `frequencyPenalty`, `presencePenalty`, `seed`),
+- provider-specific request-body fields (`reasoning_effort`, `top_k`).
+
+The schema exposes the reasoning levels under the name VS Code expects for
+BYOK models (`reasoningEffort`, `group: "navigation"`), so the agent-host BYOK
+bridge can publish them as session thinking levels. The resolver also accepts
+`thinkingLevel` (what agent-host sessions send back) and the legacy
+`reasoning_effort` spelling, and the camelCase spellings of the numeric
+settings.
+
+Only keys the schema exposes are forwarded. The group configuration (including
+`apiKey`) is never copied into the request body.
 
 ## Cache and refresh
 
@@ -110,7 +136,7 @@ Pools are not callable models. In `pools` mode the provider registers
 non-selectable entries (id `pool:<alias>`) so they appear in the model
 management UI, and pool health is additionally surfaced in:
 
-- every provider model's `detail`/`tooltip`,
+- every provider model's `tooltip` (the picker hover card),
 - the status bar,
 - the `Show Pools` command.
 

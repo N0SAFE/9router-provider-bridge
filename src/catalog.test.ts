@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   applyGroupFilters,
   catalogModels,
+  configurationSchemaFor,
   describePool,
   normalizeMode,
   poolOf,
@@ -132,7 +133,8 @@ test('catalogModels(providers): active providers only, names prefixed, caps mapp
   assert.equal(entries[0].maxOutput, 64000);
   assert.equal(entries[0].imageInput, true);
   assert.equal(entries[0].toolCalling, true);
-  assert.equal(entries[0].detail, '2/5 ready · 3 cooling · 1 locked models · round-robin (5 accounts)');
+  assert.equal(entries[0].detail, undefined);
+  assert.ok(entries[0].tooltip?.includes('2/5 ready · 3 cooling · 1 locked models · round-robin (5 accounts)'));
   assert.equal(entries[2].imageInput, false);
   assert.equal(entries[2].isUserSelectable, true);
 });
@@ -326,4 +328,93 @@ test('summarizeCatalog: counts models, combos, pools and account readiness', () 
     ready: 3,
     connections: 6,
   });
+});
+
+function schemaProperties(
+  parameters: Parameters<typeof configurationSchemaFor>[0]
+): Record<string, Record<string, unknown>> {
+  const schema = configurationSchemaFor(parameters);
+  assert.ok(schema, 'expected a configuration schema');
+  return (schema as { properties: Record<string, Record<string, unknown>> }).properties;
+}
+
+test('configurationSchemaFor: exposes reasoning effort as a navigation enum', () => {
+  const properties = schemaProperties({
+    reasoning_effort: { supported: true, type: 'enum', values: ['none', 'high', 'max'], default: null },
+  });
+
+  assert.deepEqual(properties.reasoningEffort.enum, ['none', 'high', 'max']);
+  assert.deepEqual(properties.reasoningEffort.enumItemLabels, ['None', 'High', 'Max']);
+  assert.equal(properties.reasoningEffort.group, 'navigation');
+  assert.equal(properties.reasoningEffort.default, undefined);
+});
+
+test('configurationSchemaFor: carries the upstream default when it is a valid level', () => {
+  const properties = schemaProperties({
+    reasoning_effort: { supported: true, type: 'enum', values: ['low', 'high'], default: 'high' },
+  });
+  assert.equal(properties.reasoningEffort.default, 'high');
+});
+
+test('configurationSchemaFor: skips unsupported parameters and keeps supported numbers', () => {
+  const properties = schemaProperties({
+    reasoning_effort: { supported: false, type: 'enum', values: ['high'] },
+    temperature: { supported: true, type: 'number', range: { min: 0, max: 2 } },
+    seed: { supported: true, type: 'number' },
+    logprobs: { supported: true, type: 'boolean' },
+  });
+
+  assert.equal(properties.reasoningEffort, undefined);
+  assert.equal(properties.temperature.minimum, 0);
+  assert.equal(properties.temperature.maximum, 2);
+  assert.equal(properties.seed.type, 'number');
+  assert.equal(properties.logprobs, undefined);
+});
+
+test('configurationSchemaFor: max_tokens uses the published ceiling', () => {
+  const properties = schemaProperties({
+    max_tokens: { supported: true, type: 'number', max: 384000 },
+  });
+  assert.equal(properties.max_tokens.maximum, 384000);
+  assert.equal(properties.max_tokens.type, 'number');
+  assert.equal(properties.max_tokens.group, undefined);
+});
+
+test('configurationSchemaFor: returns undefined when nothing is configurable', () => {
+  assert.equal(configurationSchemaFor(undefined), undefined);
+  assert.equal(configurationSchemaFor({}), undefined);
+  assert.equal(configurationSchemaFor({ logprobs: { supported: true, type: 'boolean' } }), undefined);
+});
+
+test('catalogModels: provider entries carry the configuration schema', () => {
+  const model: BridgeManifest['providers'][number]['models'][number] = {
+    id: 'ocg/deepseek-v4.1-flash',
+    name: 'DeepSeek V4.1 Flash',
+    capabilities: { tools: true, reasoning: true },
+    parameters: {
+      reasoning_effort: { supported: true, type: 'enum', values: ['none', 'high', 'max'] },
+    },
+  };
+  const provider = manifest.providers[0];
+  const parameterized: BridgeManifest = {
+    ...manifest,
+    providers: [{ ...provider, models: [...provider.models, model] }],
+  };
+
+  const entry = catalogModels(parameterized, 'providers').find((e) => e.id === model.id);
+  assert.ok(entry, 'expected the provider entry');
+  const properties = (entry.configurationSchema as { properties: Record<string, unknown> }).properties;
+  assert.ok(properties.reasoningEffort, 'expected reasoningEffort in the schema');
+});
+
+test('catalogModels: blank catalog names fall back to the model id and provider alias', () => {
+  const provider = manifest.providers[0];
+  const blank: BridgeManifest = {
+    ...manifest,
+    providers: [{ ...provider, name: '   ', models: [{ id: 'ollama/blank', name: '   ' }] }],
+  };
+
+  const entry = catalogModels(blank, 'providers').find((e) => e.id === 'ollama/blank');
+  assert.ok(entry, 'expected the provider entry');
+  assert.equal(entry.name, `${provider.alias} · ollama/blank`);
 });

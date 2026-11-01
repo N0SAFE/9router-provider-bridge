@@ -145,6 +145,12 @@ export interface BridgeModelEntry {
   isUserSelectable: boolean;
   kind: "provider" | "combo" | "pool";
   alias: string;
+  /**
+   * VS Code per-model configuration schema, derived from 9Router's published
+   * request parameters. Drives the model picker's "Configure Model" action and
+   * the per-model settings in chatLanguageModels.json.
+   */
+  configurationSchema?: Record<string, unknown>;
 }
 
 export function normalizeMode(value: unknown): CatalogMode {
@@ -364,6 +370,97 @@ function describeModelSettings(parameters: Record<string, BridgeParameterSetting
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+/** Display labels for the reasoning levels 9Router uses. */
+const EFFORT_LABELS: Record<string, string> = {
+  none: "None",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+};
+
+function levelLabel(value: string): string {
+  return EFFORT_LABELS[value] ?? (value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value);
+}
+
+/**
+ * Build a VS Code per-model configuration schema from the request parameters
+ * 9Router publishes for a model (`parameters`). VS Code renders a "Configure
+ * Model" action from this schema, persists the values in chatLanguageModels.json
+ * and returns them in
+ * ProvideLanguageModelChatResponseOptions.modelConfiguration, which provider.ts
+ * forwards to the upstream request.
+ *
+ * Only parameters marked as supported are exposed. Purely data-driven — no
+ * per-model special cases.
+ */
+export function configurationSchemaFor(
+  parameters: Record<string, BridgeParameterSetting> | undefined,
+): Record<string, unknown> | undefined {
+  if (!parameters) {
+    return undefined;
+  }
+
+  const properties: Record<string, unknown> = {};
+
+  const effort = parameters.reasoning_effort;
+  if (effort?.supported === true && Array.isArray(effort.values) && effort.values.length > 0) {
+    const options = effort.values.map(String);
+    // VS Code's BYOK convention names this property `reasoningEffort` (the
+    // agent-host BYOK bridge reads `configurationSchema.properties.reasoningEffort`
+    // to build the per-model reasoning levels). `group: "navigation"` surfaces
+    // it as a quick action in the model picker.
+    properties.reasoningEffort = {
+      type: "string",
+      title: "Reasoning effort",
+      markdownDescription: "Reasoning effort forwarded to the upstream model (`reasoning_effort`).",
+      enum: options,
+      enumItemLabels: options.map(levelLabel),
+      group: "navigation",
+      ...(typeof effort.default === "string" && options.includes(effort.default)
+        ? { default: effort.default }
+        : {}),
+    };
+  }
+
+  const addNumber = (
+    key: string,
+    title: string,
+    markdownDescription: string,
+    extra: Record<string, unknown> = {},
+  ): void => {
+    const setting = parameters[key];
+    if (setting?.supported !== true) {
+      return;
+    }
+    if (setting.type !== undefined && setting.type !== "number") {
+      return;
+    }
+    properties[key] = {
+      type: "number",
+      title,
+      markdownDescription,
+      ...(typeof setting.range?.min === "number" ? { minimum: setting.range.min } : {}),
+      ...(typeof setting.range?.max === "number" ? { maximum: setting.range.max } : {}),
+      ...(typeof setting.max === "number" ? { maximum: setting.max } : {}),
+      ...(typeof setting.default === "number" ? { default: setting.default } : {}),
+      ...extra,
+    };
+  };
+
+  addNumber("temperature", "Temperature", "Sampling temperature forwarded to the upstream model.");
+  addNumber("top_p", "Top P", "Nucleus sampling cutoff forwarded to the upstream model.");
+  addNumber("top_k", "Top K", "Top-K sampling cutoff forwarded to the upstream model (`top_k`).");
+  addNumber("max_tokens", "Max output tokens", "Upper bound for generated tokens (`max_tokens`).");
+  addNumber("frequency_penalty", "Frequency penalty", "Penalty for repeated tokens (`frequency_penalty`).");
+  addNumber("presence_penalty", "Presence penalty", "Penalty for tokens already present (`presence_penalty`).");
+  addNumber("seed", "Seed", "Deterministic sampling seed (`seed`).");
+
+  return Object.keys(properties).length > 0 ? { type: "object", properties } : undefined;
+}
+
 /**
  * Map a bridge manifest to picker entries for the requested mode.
  *
@@ -384,8 +481,6 @@ export function catalogModels(
   const modelsById = new Map<string, BridgeModelEntry>();
 
   for (const provider of manifest.providers ?? []) {
-    const pool = poolOf(provider);
-    const poolDetail = describePool(pool);
     const poolTip = poolTooltip(provider);
     const models = provider.models ?? [];
     // Some providers expose both free and paid models (OpenRouter). The bridge
@@ -400,6 +495,9 @@ export function catalogModels(
       : [{ alias: provider.alias, name: provider.name, models }];
 
     for (const partition of partitions) {
+      // Never surface an empty picker label: fall back to the model id and the
+      // provider alias when the catalog has no (or a blank) display name.
+      const providerLabel = partition.name?.trim() || provider.name?.trim() || provider.alias;
       for (const model of partition.models) {
         const caps = model.capabilities ?? {};
         const capabilitiesLine = describeCapabilities(caps);
@@ -407,9 +505,12 @@ export function catalogModels(
         const tooltipLines = [poolTip, capabilitiesLine, settingsLine].filter(Boolean);
         const entry: BridgeModelEntry = {
           id: model.id,
-          name: `${partition.name} · ${model.name || model.id}`,
+          name: `${providerLabel} · ${model.name?.trim() || model.id}`,
           family: partition.alias,
-          detail: poolDetail,
+          // No inline `detail`: VS Code lays the picker row out with the label
+          // at `flex: 1` (basis 0) and the description taking its content width
+          // first, so a long pool summary squeezes the label to zero width and
+          // the row looks nameless. Pool health stays in the tooltip.
           tooltip: tooltipLines.join("\n\n"),
           contextLength: positiveNumber(
             model.context_length,
@@ -424,6 +525,7 @@ export function catalogModels(
           imageInput: caps.vision === true || caps.imageInput === true,
           toolCalling: enabled(caps.tools) || caps.toolCalling === true,
           isUserSelectable: true,
+          configurationSchema: configurationSchemaFor(model.parameters),
           kind: "provider",
           alias: partition.alias,
         };
