@@ -29,12 +29,17 @@ export interface BridgeCapabilities {
   imageOutput?: boolean;
   audioOutput?: boolean;
   search?: boolean;
-  tools?: boolean;
-  reasoning?: boolean;
+  tools?: boolean | { supported?: boolean; [key: string]: unknown };
+  reasoning?: boolean | { supported?: boolean; [key: string]: unknown };
   thinkingFormat?: string;
   contextWindow?: number;
   maxOutput?: number;
   [key: string]: unknown;
+}
+
+/** 9Router publishes a capability either as a boolean or as `{ supported }`. */
+function enabled(value: boolean | { supported?: boolean } | undefined): boolean {
+  return value === true || (typeof value === "object" && value !== null && value.supported === true);
 }
 
 /** Per-parameter settings published by 9Router (reasoning levels, temp, …). */
@@ -331,8 +336,8 @@ function describeCapabilities(caps: BridgeCapabilities | undefined): string | nu
   if (caps.imageOutput === true) flags.push("image-out");
   if (caps.audioOutput === true) flags.push("audio-out");
   if (caps.search === true) flags.push("search");
-  if (caps.tools === true) flags.push("tools");
-  if (caps.reasoning === true) flags.push("reasoning");
+  if (enabled(caps.tools)) flags.push("tools");
+  if (enabled(caps.reasoning)) flags.push("reasoning");
   return flags.length > 0 ? flags.join(" · ") : null;
 }
 
@@ -417,7 +422,7 @@ export function catalogModels(
           // `vision`/`tools` are the names 9Router uses; accept the VS Code
           // capability spellings too so either payload shape works.
           imageInput: caps.vision === true || caps.imageInput === true,
-          toolCalling: caps.tools === true || caps.toolCalling === true,
+          toolCalling: enabled(caps.tools) || caps.toolCalling === true,
           isUserSelectable: true,
           kind: "provider",
           alias: partition.alias,

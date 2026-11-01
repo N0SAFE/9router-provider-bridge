@@ -150,7 +150,14 @@ test('catalogModels(providers): capabilities come from the model list (either sp
           {
             id: 'ocg/deepseek-v4.1-flash',
             name: 'DeepSeek V4.1 Flash',
-            capabilities: { vision: true, tools: true, reasoning: true, contextWindow: 1000000, maxOutput: 384000 },
+            capabilities: {
+              vision: true,
+              // Real 9Router payload for the `ocg` provider: object, not boolean.
+              tools: { supported: true },
+              reasoning: { supported: true, effort: ['low', 'high', 'max'] },
+              contextWindow: 1000000,
+              maxOutput: 384000,
+            },
             parameters: {
               reasoning_effort: { supported: true, type: 'enum', values: ['none', 'low', 'medium', 'high'] },
               temperature: { supported: false },
